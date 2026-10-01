@@ -59,7 +59,13 @@ func (h *Handlers) HandleUpdateSubscription(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	servers, err := h.subscription.UpdateURL(req.URL)
+	var servers []models.Server
+	var err error
+	if h.config.VerifiedFailover.Enabled {
+		servers, err = h.watchdog.RefreshVerified(req.URL)
+	} else {
+		servers, err = h.subscription.UpdateURL(req.URL)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -80,7 +86,13 @@ func (h *Handlers) HandleUpdateSubscription(w http.ResponseWriter, r *http.Reque
 
 // HandleRefreshSubscription — POST /api/subscription/refresh
 func (h *Handlers) HandleRefreshSubscription(w http.ResponseWriter, r *http.Request) {
-	servers, err := h.subscription.Refresh()
+	var servers []models.Server
+	var err error
+	if h.config.VerifiedFailover.Enabled {
+		servers, err = h.watchdog.RefreshVerified("")
+	} else {
+		servers, err = h.subscription.Refresh()
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -131,6 +143,9 @@ func (h *Handlers) refreshPool(servers []models.Server) (xkeen.SyncResult, error
 // HandleGetServers — GET /api/servers
 func (h *Handlers) HandleGetServers(w http.ResponseWriter, r *http.Request) {
 	servers := h.subscription.GetServers()
+	if h.config.VerifiedFailover.Enabled {
+		servers = h.watchdog.PolicyServers()
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"servers": servers,
 	})
@@ -145,6 +160,15 @@ func (h *Handlers) HandleSelectServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[SELECT] Запрос выбора сервера ID=%d", req.ID)
+	if h.config.VerifiedFailover.Enabled {
+		server, err := h.watchdog.SelectVerified(r.Context(), req.ID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "server": server, "restarting": false})
+		return
+	}
 
 	server, err := h.subscription.SetActive(req.ID)
 	if err != nil {
@@ -327,6 +351,15 @@ func (h *Handlers) HandleMihomoSync(w http.ResponseWriter, r *http.Request) {
 
 // HandleCheckServers — POST /api/servers/check
 func (h *Handlers) HandleCheckServers(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		servers, err := h.watchdog.CheckVerifiedServers(r.Context(), nil)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"servers": servers})
+		return
+	}
 	servers := h.subscription.GetServers()
 	timeout := time.Duration(h.config.ProbeTimeoutMs) * time.Millisecond
 	checked := xkeen.CheckAllLatencies(servers, timeout, h.config.ProbeConcurrency)
@@ -354,6 +387,9 @@ func (h *Handlers) HandleSetCountry(w http.ResponseWriter, r *http.Request) {
 
 // HandleRestart — POST /api/xkeen/restart
 func (h *Handlers) HandleRestart(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		defer h.watchdog.LockCoreOperation()()
+	}
 	rt := h.detector.Runtime()
 	log.Printf("[RESTART-API] Кнопка рестарта нажата, xkeen=%s", rt.Dispatcher)
 
@@ -377,6 +413,9 @@ func (h *Handlers) HandleRestart(w http.ResponseWriter, r *http.Request) {
 
 // HandleStart — POST /api/xkeen/start
 func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		defer h.watchdog.LockCoreOperation()()
+	}
 	output, err := xkeen.Start(h.detector.Runtime().Dispatcher)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -391,6 +430,13 @@ func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {
 
 // HandleStop — POST /api/xkeen/stop
 func (h *Handlers) HandleStop(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		if err := h.watchdog.SetAutomationEnabled(false); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		defer h.watchdog.LockCoreOperation()()
+	}
 	output, err := xkeen.Stop(h.detector.Runtime().Dispatcher)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -460,6 +506,10 @@ func (h *Handlers) HandlePoolStatus(w http.ResponseWriter, r *http.Request) {
 // HandlePoolEnable — POST /api/pool/enable. Builds a pool from the subscription
 // and moves the routing rules onto the balancer.
 func (h *Handlers) HandlePoolEnable(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Проверяемое переключение работает с одним сервером. Пул для этого режима отключён."})
+		return
+	}
 	servers := h.subscription.GetServers()
 	if len(servers) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "подписка пуста — нечего добавлять в пул"})
@@ -610,6 +660,9 @@ func (h *Handlers) HandleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 // HandleUpdateSettings — PUT /api/xkeen/settings
 func (h *Handlers) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		defer h.watchdog.LockCoreOperation()()
+	}
 	var req struct {
 		Settings map[string]interface{} `json:"settings"`
 	}
@@ -653,6 +706,9 @@ func (h *Handlers) HandleGetList(w http.ResponseWriter, r *http.Request) {
 
 // HandleUpdateList — PUT /api/xkeen/lists/{name}
 func (h *Handlers) HandleUpdateList(w http.ResponseWriter, r *http.Request) {
+	if h.config.VerifiedFailover.Enabled {
+		defer h.watchdog.LockCoreOperation()()
+	}
 	path, kind, err := xkeen.ListPath(h.detector.Runtime(), chi.URLParam(r, "name"))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})

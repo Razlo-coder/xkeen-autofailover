@@ -8,14 +8,15 @@ import (
 
 // Config is the application configuration (config.yaml).
 type Config struct {
-	Port          int    `yaml:"port"`
-	DataDir       string `yaml:"data_dir"`
-	XKeenPath     string `yaml:"xkeen_path"`
-	OutboundsFile string `yaml:"outbounds_file"`
-	CheckInterval int    `yaml:"check_interval"`
-	CheckURL      string `yaml:"check_url"`
-	MaxFails      int    `yaml:"max_fails"`
-	LogFile       string `yaml:"log_file"`
+	Port             int                    `yaml:"port"`
+	DataDir          string                 `yaml:"data_dir"`
+	XKeenPath        string                 `yaml:"xkeen_path"`
+	OutboundsFile    string                 `yaml:"outbounds_file"`
+	CheckInterval    int                    `yaml:"check_interval"`
+	CheckURL         string                 `yaml:"check_url"`
+	MaxFails         int                    `yaml:"max_fails"`
+	LogFile          string                 `yaml:"log_file"`
+	VerifiedFailover VerifiedFailoverConfig `yaml:"verified_failover"`
 
 	// XKeen layout. Every field is optional — the panel detects the layout of
 	// both the 1.x (S24xray) and 2.x (S05xkeen) installs on startup.
@@ -64,6 +65,31 @@ type Config struct {
 	WebAuthnOrigins []string `yaml:"webauthn_origins"`
 }
 
+// VerifiedFailoverConfig enables a conservative single-outbound controller.
+// CountryPriority is an allowlist as well as an ordered preference.
+type VerifiedFailoverConfig struct {
+	Enabled              bool     `yaml:"enabled"`
+	CountryPriority      []string `yaml:"country_priority"`
+	AllowOtherCountries  bool     `yaml:"allow_other_countries"`
+	PreferredServerNames []string `yaml:"preferred_server_names"`
+	ExcludedServerNames  []string `yaml:"excluded_server_names"`
+	ExcludeNameContains  []string `yaml:"exclude_name_contains"`
+	BypassMark           int      `yaml:"bypass_mark"`
+	ProbeTimeoutSec      int      `yaml:"probe_timeout_sec"`
+	RetryIntervalSec     int      `yaml:"retry_interval_sec"`
+}
+
+// AutomationSettings is user-editable in the panel and stored independently
+// from installation paths and packet marks. Names survive endpoint rotation.
+type AutomationSettings struct {
+	Enabled              bool     `json:"enabled"`
+	CountryPriority      []string `json:"country_priority"`
+	AllowOtherCountries  bool     `json:"allow_other_countries"`
+	PreferredServerNames []string `json:"preferred_server_names"`
+	ExcludedServerNames  []string `json:"excluded_server_names"`
+	ExcludeNameContains  []string `json:"exclude_name_contains"`
+}
+
 // User is the panel account (data/user.json).
 type User struct {
 	Username     string    `json:"username"`
@@ -78,17 +104,19 @@ type User struct {
 
 // Server is one entry of the subscription.
 type Server struct {
-	ID              int       `json:"id"`
-	Name            string    `json:"name"`
-	Address         string    `json:"address"`
-	Port            int       `json:"port"`
-	Protocol        string    `json:"protocol"`
-	Active          bool      `json:"active"`
-	Latency         int       `json:"latency_ms"`
-	RawURI          string    `json:"raw_uri,omitempty"`
-	LastChecked     time.Time `json:"last_checked,omitempty"`
-	Country         string    `json:"country,omitempty"`
-	CountryOverride string    `json:"country_override,omitempty"`
+	ID                int       `json:"id"`
+	Name              string    `json:"name"`
+	Address           string    `json:"address"`
+	Port              int       `json:"port"`
+	Protocol          string    `json:"protocol"`
+	Active            bool      `json:"active"`
+	Latency           int       `json:"latency_ms"`
+	RawURI            string    `json:"raw_uri,omitempty"`
+	LastChecked       time.Time `json:"last_checked,omitempty"`
+	Country           string    `json:"country,omitempty"`
+	CountryOverride   string    `json:"country_override,omitempty"`
+	AutomaticEligible *bool     `json:"automatic_eligible,omitempty"`
+	ExclusionReason   string    `json:"exclusion_reason,omitempty"`
 }
 
 // SubscriptionData is the stored subscription (data/subscription.json).
@@ -101,15 +129,19 @@ type SubscriptionData struct {
 
 // Status is the connection status reported to the UI.
 type Status struct {
-	Connected      bool      `json:"connected"`
-	XrayRunning    bool      `json:"xray_running"`
-	Restarting     bool      `json:"restarting"`
-	CurrentServer  string    `json:"current_server"`
-	Protocol       string    `json:"protocol"`
-	Latency        int       `json:"latency_ms"`
-	Uptime         string    `json:"uptime"`
-	LastCheck      time.Time `json:"last_check"`
-	WatchdogActive bool      `json:"watchdog_active"`
+	VerifiedFailover    bool      `json:"verified_failover"`
+	CountryPriority     []string  `json:"country_priority,omitempty"`
+	AllowOtherCountries bool      `json:"allow_other_countries"`
+	ExcludedNames       []string  `json:"excluded_names,omitempty"`
+	Connected           bool      `json:"connected"`
+	XrayRunning         bool      `json:"xray_running"`
+	Restarting          bool      `json:"restarting"`
+	CurrentServer       string    `json:"current_server"`
+	Protocol            string    `json:"protocol"`
+	Latency             int       `json:"latency_ms"`
+	Uptime              string    `json:"uptime"`
+	LastCheck           time.Time `json:"last_check"`
+	WatchdogActive      bool      `json:"watchdog_active"`
 
 	// XKeen runtime: proxy core (xray/mihomo), proxying mode (TProxy/Hybrid/…),
 	// version and layout generation.

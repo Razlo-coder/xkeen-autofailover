@@ -134,7 +134,7 @@ export function Controls({
                 )}
 
                 <div className='flex items-center justify-between pt-1'>
-                    <Label htmlFor='watchdog-toggle'>Watchdog</Label>
+                    <Label htmlFor='watchdog-toggle'>Автовосстановление</Label>
                     <Switch
                         id='watchdog-toggle'
                         checked={watchdogActive}

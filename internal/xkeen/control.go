@@ -7,10 +7,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -58,7 +59,7 @@ func runXkeen(dispatcher string, timeout time.Duration, args ...string) (string,
 	cmd.Env = append(os.Environ(), "XKEEN_FOREGROUND=1")
 	cmd.Stdout = out
 	cmd.Stderr = out
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detachCommand(cmd)
 
 	runErr := cmd.Run()
 
@@ -109,6 +110,78 @@ func Restart(dispatcher string) (string, error) {
 	}()
 
 	return "restart initiated", nil
+}
+
+// RestartAndWait is used by verified failover: returning before the restart
+// finishes would make post-start checks and rollback race XKeen itself.
+func RestartAndWait(dispatcher string) (string, error) {
+	restartMu.Lock()
+	if restarting {
+		restartMu.Unlock()
+		return "", fmt.Errorf("перезапуск уже выполняется")
+	}
+	restarting = true
+	restartMu.Unlock()
+	if OnRestartStateChange != nil {
+		OnRestartStateChange(true)
+	}
+	defer func() {
+		restartMu.Lock()
+		restarting = false
+		restartMu.Unlock()
+		if OnRestartStateChange != nil {
+			OnRestartStateChange(false)
+		}
+	}()
+	before := mainCorePIDs(CoreXray)
+	output, err := runXkeen(dispatcher, restartTimeout, "-restart")
+	if err != nil {
+		return output, err
+	}
+	// XKeen builds predating XKEEN_FOREGROUND still detach. A changed PID is
+	// required, so the old still-running process cannot pass the startup check.
+	if runtime.GOOS == "linux" {
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			after := mainCorePIDs(CoreXray)
+			changed := len(after) > 0
+			for pid := range before {
+				if after[pid] {
+					changed = false
+				}
+			}
+			if changed {
+				break
+			}
+			if time.Now().After(deadline) {
+				return output, fmt.Errorf("новый основной процесс Xray не появился после перезапуска")
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	runningMu.Lock()
+	runningCheckedAt = time.Time{}
+	runningMu.Unlock()
+	return output, nil
+}
+
+func mainCorePIDs(core string) map[string]bool {
+	pids := map[string]bool{}
+	entries, _ := os.ReadDir("/proc")
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		data, err := os.ReadFile("/proc/" + entry.Name() + "/cmdline")
+		if err != nil || bytes.Contains(data, []byte("panel-vpn-probe-")) {
+			continue
+		}
+		parts := bytes.Split(data, []byte{0})
+		if len(parts) > 0 && filepath.Base(string(parts[0])) == core {
+			pids[entry.Name()] = true
+		}
+	}
+	return pids
 }
 
 // Start starts the proxy core. The `on` argument mirrors what `xkeen -start`
@@ -192,7 +265,7 @@ func coreProcessRunning(core string) bool {
 			continue
 		}
 		cmd := string(bytes.ReplaceAll(data, []byte{0}, []byte{' '}))
-		if strings.Contains(cmd, "xkeen-panel") {
+		if strings.Contains(cmd, "xkeen-panel") || strings.Contains(cmd, "panel-vpn-probe-") {
 			continue // do not count the panel itself
 		}
 		if strings.Contains(cmd, core) {

@@ -161,7 +161,7 @@ func TestListPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPath: %v", err)
 	}
-	if path != "/opt/etc/xkeen/port_proxying.lst" {
+	if path != filepath.FromSlash("/opt/etc/xkeen/port_proxying.lst") {
 		t.Errorf("path = %q", path)
 	}
 	if kind != ListPorts {

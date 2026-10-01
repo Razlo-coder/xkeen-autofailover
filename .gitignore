@@ -17,3 +17,13 @@ frontend/dist/
 .vscode/
 *.swp
 .DS_Store
+xkeen-reference/
+frontend/pnpm-lock.yaml
+private/
+.install-private-*/
+subscription.json
+04_outbounds.json
+user.json
+automation.json
+failover-pending.json
+install-status.json

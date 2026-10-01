@@ -128,6 +128,11 @@ func readProxyEndpoint(ob map[string]interface{}) (address string, port int, uui
 		}
 		return address, port, uuid, address != ""
 	}
+	if servers, ok := settings["servers"].([]interface{}); ok && len(servers) > 0 {
+		entry := mapOf(servers[0])
+		address, _ = entry["address"].(string)
+		return address, toInt(entry["port"]), "", address != ""
+	}
 
 	address, _ = settings["address"].(string)
 	port = toInt(settings["port"])

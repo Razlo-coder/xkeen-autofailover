@@ -1,0 +1,43 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.8'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build
+      - name: Check installer shell syntax
+        run: sh -n install.sh && cmp install.sh deploy/install.sh
+      - name: Install pinned Xray for integration tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/xray"
+          cd "$RUNNER_TEMP/xray"
+          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o xray.zip
+          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip.dgst -o xray.zip.dgst
+          expected=$(awk '/^SHA2-256=/{print $2}' xray.zip.dgst)
+          test "${#expected}" = 64
+          printf '%s  xray.zip\n' "$expected" | sha256sum -c -
+          unzip -q xray.zip
+          chmod +x xray
+          echo "TEST_XRAY_BIN=$RUNNER_TEMP/xray/xray" >> "$GITHUB_ENV"
+      - run: go test -race ./... -count=1
+      - run: go vet ./...
+      - name: Cross-compile supported builds
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o build/xkeen-panel-aarch64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags='-s -w' -o build/xkeen-panel-armv7 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags='-s -w' -o build/xkeen-panel-mipsel .

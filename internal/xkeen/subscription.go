@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,27 @@ type SubscriptionManager struct {
 	dataDir string
 	data    *models.SubscriptionData
 	mu      sync.RWMutex
+	client  *http.Client
+}
+
+// SetHTTPClient is called once, before any background work starts.
+func (sm *SubscriptionManager) SetHTTPClient(client *http.Client) { sm.client = client }
+
+// ReconcileActive records only a server actually present in the active config.
+// An unmatched config stays usable, but no unrelated subscription entry is
+// displayed as active and no first-entry fallback gets applied automatically.
+func (sm *SubscriptionManager) ReconcileActive(outbound map[string]interface{}) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.data.ActiveID = -1
+	for i := range sm.data.Servers {
+		ob, err := OutboundForServer(outbound, &sm.data.Servers[i])
+		match := err == nil && SameOutbound(outbound, ob)
+		sm.data.Servers[i].Active = match && sm.data.ActiveID < 0
+		if sm.data.Servers[i].Active {
+			sm.data.ActiveID = i
+		}
+	}
 }
 
 func NewSubscriptionManager(dataDir string) *SubscriptionManager {
@@ -60,7 +82,7 @@ func (sm *SubscriptionManager) Save() error {
 		return err
 	}
 
-	return os.WriteFile(sm.filePath(), data, 0600)
+	return writeFileAtomic(sm.filePath(), data, 0600)
 }
 
 // UpdateURL sets a new subscription URL, then downloads and parses it.
@@ -135,7 +157,18 @@ func carryOverrides(old, fresh []models.Server) {
 		return
 	}
 	overrides := make(map[string]string, len(old))
+	byName := map[string]string{}
+	nameCounts := map[string]int{}
+	freshNameCounts := map[string]int{}
+	for _, s := range fresh {
+		freshNameCounts[strings.ToLower(strings.TrimSpace(s.Name))]++
+	}
 	for i := range old {
+		name := strings.ToLower(strings.TrimSpace(old[i].Name))
+		nameCounts[name]++
+		if old[i].CountryOverride != "" {
+			byName[name] = old[i].CountryOverride
+		}
 		if old[i].CountryOverride != "" && old[i].RawURI != "" {
 			overrides[old[i].RawURI] = old[i].CountryOverride
 		}
@@ -143,6 +176,8 @@ func carryOverrides(old, fresh []models.Server) {
 	for i := range fresh {
 		if ov, ok := overrides[fresh[i].RawURI]; ok {
 			fresh[i].CountryOverride = ov
+		} else if name := strings.ToLower(strings.TrimSpace(fresh[i].Name)); name != "" && nameCounts[name] == 1 && freshNameCounts[name] == 1 {
+			fresh[i].CountryOverride = byName[name]
 		}
 	}
 }
@@ -171,6 +206,7 @@ func (sm *SubscriptionManager) GetServers() []models.Server {
 // so the UI shows them at once and does not lose them on refresh.
 func (sm *SubscriptionManager) UpdateLatencies(checked []models.Server) {
 	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
 	byURI := make(map[string]int, len(checked))
 	for _, c := range checked {
@@ -188,13 +224,12 @@ func (sm *SubscriptionManager) UpdateLatencies(checked []models.Server) {
 	}
 
 	data, err := json.MarshalIndent(sm.data, "", "  ")
-	sm.mu.Unlock()
 
 	if err != nil {
 		return
 	}
 	if err := os.MkdirAll(sm.dataDir, 0700); err == nil {
-		os.WriteFile(sm.filePath(), data, 0600)
+		writeFileAtomic(sm.filePath(), data, 0600)
 	}
 }
 
@@ -217,7 +252,7 @@ func (sm *SubscriptionManager) SetCountryOverride(id int, country string) error 
 	if err := os.MkdirAll(sm.dataDir, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(sm.filePath(), data, 0600)
+	return writeFileAtomic(sm.filePath(), data, 0600)
 }
 
 // SetActive makes the server with the given id active.
@@ -245,7 +280,7 @@ func (sm *SubscriptionManager) SetActive(id int) (*models.Server, error) {
 	if err := os.MkdirAll(sm.dataDir, 0700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(sm.filePath(), data, 0600); err != nil {
+	if err := writeFileAtomic(sm.filePath(), data, 0600); err != nil {
 		return nil, err
 	}
 
@@ -283,7 +318,7 @@ func (sm *SubscriptionManager) SetActiveByRawURI(uri string) (*models.Server, er
 	if err := os.MkdirAll(sm.dataDir, 0700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(sm.filePath(), data, 0600); err != nil {
+	if err := writeFileAtomic(sm.filePath(), data, 0600); err != nil {
 		return nil, err
 	}
 
@@ -325,9 +360,12 @@ func (sm *SubscriptionManager) SelectNext() (*models.Server, error) {
 
 func (sm *SubscriptionManager) downloadAndParse(url string) ([]models.Server, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
+	if sm.client != nil {
+		client = sm.client
+	}
 	resp, err := client.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка загрузки подписки: %w", err)
+		return nil, subscriptionDownloadError(err)
 	}
 	defer resp.Body.Close()
 
@@ -335,10 +373,22 @@ func (sm *SubscriptionManager) downloadAndParse(url string) ([]models.Server, er
 		return nil, fmt.Errorf("сервер вернул код %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	const maxBody = 4 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
 	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("подписка превышает 4 МБ")
+	}
 
 	return ParseSubscription(string(body))
+}
+
+func subscriptionDownloadError(err error) error {
+	// http.Client includes the full URL (a bearer credential) in url.Error.
+	if e, ok := err.(*url.Error); ok {
+		err = e.Err
+	}
+	return fmt.Errorf("ошибка загрузки подписки: %w", err)
 }

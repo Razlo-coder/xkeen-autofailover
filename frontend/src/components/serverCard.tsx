@@ -76,6 +76,11 @@ export function ServerCard({
                             <span className='shrink-0 w-2 h-2 rounded-full bg-emerald-500' />
                         )}
                     </div>
+                    {server.exclusion_reason && (
+                        <p className='mt-2 text-xs text-muted-foreground'>
+                            {server.exclusion_reason}
+                        </p>
+                    )}
 
                     <div className='flex flex-wrap items-center gap-1.5 text-xs'>
                         <Badge
@@ -164,7 +169,9 @@ export function ServerCard({
                         size='sm'
                         variant='outline'
                         onClick={() => onSelect(server.id)}
-                        disabled={loading}
+                        disabled={
+                            loading || server.automatic_eligible === false
+                        }
                     >
                         Выбрать
                     </Button>

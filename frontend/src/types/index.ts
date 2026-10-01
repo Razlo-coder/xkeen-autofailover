@@ -9,9 +9,24 @@ export type Server = {
     country?: string
     country_override?: string
     last_checked?: string
+    automatic_eligible?: boolean
+    exclusion_reason?: string
+}
+
+export type AutomationSettings = {
+    enabled: boolean
+    country_priority: string[]
+    allow_other_countries: boolean
+    preferred_server_names: string[]
+    excluded_server_names: string[]
+    exclude_name_contains: string[]
 }
 
 export type Status = {
+    verified_failover?: boolean
+    country_priority?: string[]
+    allow_other_countries?: boolean
+    excluded_names?: string[]
     connected: boolean
     xray_running: boolean
     restarting: boolean

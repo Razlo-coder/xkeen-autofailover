@@ -15,19 +15,10 @@ import (
 
 // ParseSubscription parses subscription content, base64 or plain text.
 func ParseSubscription(content string) ([]models.Server, error) {
-	// Try base64
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(content))
+	content = strings.TrimPrefix(strings.TrimSpace(content), "\ufeff")
+	decoded, err := decodeShareBase64(content)
 	if err != nil {
-		// Try URL-safe base64
-		decoded, err = base64.URLEncoding.DecodeString(strings.TrimSpace(content))
-		if err != nil {
-			// Try unpadded base64
-			decoded, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(content))
-			if err != nil {
-				// Probably plain text already
-				decoded = []byte(content)
-			}
-		}
+		decoded = []byte(content)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(decoded)), "\n")

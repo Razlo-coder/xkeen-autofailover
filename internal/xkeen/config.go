@@ -95,7 +95,10 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("ошибка прав доступа %s: %w", tmpName, err)
 	}
 
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return syncParent(path)
 }
 
 // VLESSParams holds every parameter of a VLESS URI. Exported because the Mihomo
@@ -130,26 +133,39 @@ func ParseVLESS(uri string) (*VLESSParams, error) {
 	if u.Scheme != "vless" {
 		return nil, fmt.Errorf("не VLESS URI")
 	}
+	if u.User == nil || u.User.Username() == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("VLESS: отсутствует пользователь или адрес")
+	}
 
 	port := 443
 	if p := u.Port(); p != "" {
-		fmt.Sscanf(p, "%d", &port)
+		if _, err := fmt.Sscanf(p, "%d", &port); err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("VLESS: неверный порт")
+		}
 	}
 
 	q := u.Query()
+	path := q.Get("path")
+	if path == "" {
+		path = q.Get("serviceName")
+	}
+	sni := q.Get("sni")
+	if sni == "" {
+		sni = q.Get("peer")
+	}
 	return &VLESSParams{
 		UUID:        u.User.Username(),
 		Address:     u.Hostname(),
 		Port:        port,
 		Security:    q.Get("security"),
 		Network:     q.Get("type"),
-		SNI:         q.Get("sni"),
+		SNI:         sni,
 		Fingerprint: q.Get("fp"),
 		PublicKey:   q.Get("pbk"),
 		ShortID:     q.Get("sid"),
 		SpiderX:     q.Get("spx"),
 		Host:        q.Get("host"),
-		Path:        q.Get("path"),
+		Path:        path,
 		Mode:        q.Get("mode"),
 		Flow:        q.Get("flow"),
 		ALPN:        q.Get("alpn"),

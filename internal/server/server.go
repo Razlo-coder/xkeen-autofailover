@@ -77,15 +77,25 @@ func (s *Server) Handler() http.Handler {
 			r.Use(api.AuthMiddleware(s.userManager))
 
 			r.Get("/events", sse.HandleEvents(s.eventBus, s.watchdog))
-			r.Get("/servers/check", sse.HandleStreamLatency(s.subscription, s.config.ProbeConcurrency, time.Duration(s.config.ProbeTimeoutMs)*time.Millisecond))
+			if s.config.VerifiedFailover.Enabled {
+				r.Get("/servers/check", sse.HandleVerifiedStream(s.watchdog))
+			} else {
+				r.Get("/servers/check", sse.HandleStreamLatency(s.subscription, s.config.ProbeConcurrency, time.Duration(s.config.ProbeTimeoutMs)*time.Millisecond))
+			}
 		})
 
 		// Protected REST routes: JWT and a timeout
 		r.Group(func(r chi.Router) {
 			r.Use(api.AuthMiddleware(s.userManager))
-			r.Use(middleware.Timeout(30 * time.Second))
+			requestTimeout := 30 * time.Second
+			if s.config.VerifiedFailover.Enabled {
+				requestTimeout = 10 * time.Minute
+			}
+			r.Use(middleware.Timeout(requestTimeout))
 
 			r.Get("/status", handlers.HandleStatus)
+			r.Get("/automation", handlers.HandleGetAutomation)
+			r.Put("/automation", handlers.HandleSaveAutomation)
 
 			r.Get("/subscription", handlers.HandleGetSubscription)
 			r.Post("/subscription", handlers.HandleUpdateSubscription)
@@ -132,7 +142,16 @@ func (s *Server) Handler() http.Handler {
 					json.NewEncoder(w).Encode(map[string]string{"error": "неверный формат"})
 					return
 				}
-				s.watchdog.SetActive(req.Active)
+				if s.config.VerifiedFailover.Enabled {
+					if err := s.watchdog.SetAutomationEnabled(req.Active); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				} else {
+					s.watchdog.SetActive(req.Active)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]bool{"active": req.Active})
 			})

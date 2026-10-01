@@ -1,4 +1,4 @@
-.PHONY: dev dev-backend dev-frontend build-frontend build-arm64 build-mipsel build-all build-local clean deploy-disk deploy-ssh
+.PHONY: dev dev-backend dev-frontend build-frontend build-arm64 build-armv7 build-mipsel build-all build-local clean deploy-disk deploy-ssh
 
 # === Разработка ===
 
@@ -22,6 +22,9 @@ build-arm64: build-frontend
 		-o build/xkeen-panel-aarch64 \
 		.
 
+build-armv7: build-frontend
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-armv7 .
+
 build-mipsel: build-frontend
 	GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build \
 		-trimpath -ldflags="-s -w" \
@@ -29,8 +32,9 @@ build-mipsel: build-frontend
 		.
 
 build-all: build-frontend
-	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-aarch64 .
-	GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-mipsel .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-aarch64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-armv7 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o build/xkeen-panel-mipsel .
 
 build-local: build-frontend
 	go build -o build/xkeen-panel .

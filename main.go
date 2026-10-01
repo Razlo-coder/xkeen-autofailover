@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,6 +25,8 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "путь к конфигурационному файлу")
+	preflight := flag.Bool("preflight", false, "проверить настройки и конфигурацию XKeen без изменений")
+	verifyNow := flag.Bool("verify-now", false, "однократно проверить текущее VPN-подключение без изменения файлов")
 	flag.Parse()
 
 	// Load the configuration
@@ -40,6 +43,9 @@ func main() {
 
 	// Subscription manager
 	subManager := xkeen.NewSubscriptionManager(cfg.DataDir)
+	if cfg.VerifiedFailover.Enabled {
+		subManager.SetHTTPClient(xkeen.DirectHTTPClient(cfg.VerifiedFailover.BypassMark))
+	}
 	if err := subManager.Load(); err != nil {
 		log.Printf("Предупреждение: ошибка загрузки подписки: %v", err)
 	}
@@ -48,6 +54,36 @@ func main() {
 	detector := xkeen.NewDetector("", cfg.XKeenPath, cfg.InitScript,
 		cfg.XrayConfigDir, cfg.RoutingFile, cfg.MihomoConfig, cfg.XkeenJSON)
 	rt := detector.Runtime()
+	if *verifyNow {
+		ob, err := xkeen.SingleProxy(cfg.OutboundsFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		p := xkeen.VPNProber{Binary: rt.CoreBin, Mark: cfg.VerifiedFailover.BypassMark, URLs: cfg.HealthCheckURLs, Timeout: time.Duration(cfg.VerifiedFailover.ProbeTimeoutSec) * time.Second}
+		r, err := p.Probe(context.Background(), ob)
+		running := xkeen.IsRunning(xkeen.CoreXray)
+		log.Printf("VPN: HTTPS %d/%d; основное ядро=%v", r.Successes, r.Total, running)
+		if err != nil {
+			log.Printf("Ошибка проверки: %v", err)
+		}
+		if err != nil || !r.OK || !running {
+			os.Exit(2)
+		}
+		return
+	}
+	if *preflight {
+		if !rt.Installed || rt.Core != xkeen.CoreXray {
+			log.Fatal("Нужен установленный XKeen с ядром Xray")
+		}
+		if _, err := xkeen.SingleProxy(cfg.OutboundsFile); err != nil {
+			log.Fatal(err)
+		}
+		if output, err := xkeen.ValidateXray(rt); err != nil {
+			log.Fatalf("Проверка Xray: %s", xkeen.TailLines(output, 4))
+		}
+		log.Printf("Настройки проверены: ядро=%s, страны=%v, исключения=%v", rt.Core, cfg.VerifiedFailover.CountryPriority, cfg.VerifiedFailover.ExcludeNameContains)
+		return
+	}
 	if !rt.Installed {
 		log.Printf("XKeen не найден (%s) — управление ядром недоступно", rt.InitScript)
 	} else {
@@ -63,11 +99,13 @@ func main() {
 
 	// An install from before the api block was fixed cannot pin a pool node until
 	// the file is migrated, and a pool in sync never reaches the refresh path
-	if migrated, err := xkeen.EnsureAPIConfig(poolStore.Get(), cfg.XrayAPIAddr); err != nil {
-		log.Printf("Не удалось обновить api-блок Xray: %v", err)
-	} else if migrated {
-		log.Printf("api-блок Xray приведён к текущей форме — перезапускаю ядро")
-		xkeen.Restart(rt.Dispatcher)
+	if !cfg.VerifiedFailover.Enabled {
+		if migrated, err := xkeen.EnsureAPIConfig(poolStore.Get(), cfg.XrayAPIAddr); err != nil {
+			log.Printf("Не удалось обновить api-блок Xray: %v", err)
+		} else if migrated {
+			log.Printf("api-блок Xray приведён к текущей форме — перезапускаю ядро")
+			xkeen.Restart(rt.Dispatcher)
+		}
 	}
 
 	// Watchdog and SSE
@@ -75,6 +113,14 @@ func main() {
 	eventBus := sse.NewEventBus()
 	watchdog.SetEventBus(eventBus)
 	watchdog.SetPoolStore(poolStore)
+	if cfg.VerifiedFailover.Enabled {
+		if err := watchdog.LoadAutomation(); err != nil {
+			log.Fatalf("Настройки автоматизации: %v", err)
+		}
+		if err := watchdog.PrepareVerified(); err != nil {
+			log.Fatalf("Проверяемое переключение: %v", err)
+		}
+	}
 
 	// Package xkeen logs to stdout by default, which the init script discards —
 	// send its pool and restart events to the panel log instead
@@ -93,7 +139,7 @@ func main() {
 	}
 
 	// Autostart the watchdog for unattended operation
-	if cfg.WatchdogAutoStart && len(subManager.GetServers()) > 0 {
+	if cfg.WatchdogAutoStart && (len(subManager.GetServers()) > 0 || cfg.VerifiedFailover.Enabled) {
 		watchdog.SetActive(true)
 		log.Printf("Watchdog включён автоматически (watchdog_auto_start)")
 	}
@@ -176,6 +222,15 @@ func runSubscriptionRefresh(ctx context.Context, cfg *models.Config, sm *xkeen.S
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if cfg.VerifiedFailover.Enabled {
+				if servers, err := wd.RefreshVerified(""); err != nil {
+					wd.Log("[AUTO-UPDATE] %v", err)
+				} else {
+					wd.Log("[AUTO-UPDATE] Подписка обновлена (%d серверов)", len(servers))
+					bus.Publish(sse.Event{Type: "subscription", Data: map[string]bool{"updated": true}})
+				}
+				continue
+			}
 			prevURI := ""
 			if a := sm.GetActiveServer(); a != nil {
 				prevURI = a.RawURI
@@ -271,6 +326,10 @@ func loadConfig(path string) (*models.Config, error) {
 		CheckURL:      "https://www.google.com",
 		MaxFails:      3,
 		LogFile:       "xkeen-panel.log",
+		VerifiedFailover: models.VerifiedFailoverConfig{
+			AllowOtherCountries: true,
+			BypassMark:          255, ProbeTimeoutSec: 8, RetryIntervalSec: 120,
+		},
 
 		ProbeTimeoutMs:     2000,
 		ProbeConcurrency:   20,
@@ -293,6 +352,39 @@ func loadConfig(path string) (*models.Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// Older installations used CountryPriority as a strict allowlist. Preserve
+	// that choice unless the new explicit checkbox was saved in YAML/the UI.
+	var legacy struct {
+		Verified struct {
+			Allow *bool `yaml:"allow_other_countries"`
+		} `yaml:"verified_failover"`
+	}
+	if yaml.Unmarshal(data, &legacy) == nil && legacy.Verified.Allow == nil && len(cfg.VerifiedFailover.CountryPriority) > 0 {
+		cfg.VerifiedFailover.AllowOtherCountries = false
+	}
+	if cfg.VerifiedFailover.Enabled {
+		if cfg.CheckInterval < 10 || cfg.MaxFails < 2 {
+			return nil, fmt.Errorf("check_interval должен быть >= 10, max_fails >= 2")
+		}
+		p := cfg.VerifiedFailover
+		if (!p.AllowOtherCountries && len(p.CountryPriority) == 0) || p.BypassMark < 1 || p.ProbeTimeoutSec < 1 || p.ProbeTimeoutSec > 60 || p.RetryIntervalSec < 30 {
+			return nil, fmt.Errorf("неверные параметры verified_failover")
+		}
+		if cfg.SubscriptionRefreshInterval < 0 {
+			return nil, fmt.Errorf("интервал подписки не может быть отрицательным")
+		}
+		hosts := map[string]bool{}
+		for _, target := range cfg.HealthCheckURLs {
+			u, e := url.Parse(target)
+			if e != nil || u.Scheme != "https" || u.Hostname() == "" {
+				return nil, fmt.Errorf("health_check_urls должны содержать HTTPS-адреса")
+			}
+			hosts[u.Hostname()] = true
+		}
+		if len(hosts) < 2 {
+			return nil, fmt.Errorf("нужны как минимум два независимых HTTPS-адреса для проверки")
+		}
 	}
 
 	return cfg, nil

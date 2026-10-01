@@ -27,22 +27,28 @@ const (
 )
 
 type Watchdog struct {
-	config       *models.Config
-	subscription *xkeen.SubscriptionManager
-	detector     *xkeen.Detector
-	mu           sync.RWMutex
-	active       bool
-	failCount    int
-	latencyHigh  int
-	lastCheck    time.Time
-	lastLatency  int
-	connected    bool
-	startTime    time.Time
-	logs         []string
-	logFile      *os.File
-	eventBus     *sse.EventBus
-	geoip        *geoip.Matcher
-	blacklist    map[string]time.Time // keyed by RawURI, which survives reindexing
+	operationMu         sync.Mutex
+	lastVerifiedAttempt time.Time
+	verifiedProbe       func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
+	verifiedApplier     *xkeen.VerifiedApplier
+	config              *models.Config
+	subscription        *xkeen.SubscriptionManager
+	detector            *xkeen.Detector
+	mu                  sync.RWMutex
+	active              bool
+	failCount           int
+	latencyHigh         int
+	lastCheck           time.Time
+	lastLatency         int
+	connected           bool
+	startTime           time.Time
+	logs                []string
+	logFile             *os.File
+	logMu               sync.Mutex
+	logWrites           int
+	eventBus            *sse.EventBus
+	geoip               *geoip.Matcher
+	blacklist           map[string]time.Time // keyed by RawURI, which survives reindexing
 
 	health       *HealthChecker
 	ticks        int
@@ -97,7 +103,9 @@ func (w *Watchdog) Start(ctx context.Context) {
 		if err != nil {
 			log.Printf("Не удалось открыть лог-файл: %v", err)
 		} else {
+			w.logMu.Lock()
 			w.logFile = f
+			w.logMu.Unlock()
 		}
 	}
 
@@ -112,15 +120,18 @@ func (w *Watchdog) Start(ctx context.Context) {
 	w.writeLog("Watchdog запущен (интервал: %s)", interval)
 
 	// Check once immediately
-	w.check()
+	w.checkWithContext(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			w.writeLog("Watchdog остановлен")
+			w.logMu.Lock()
 			if w.logFile != nil {
 				w.logFile.Close()
+				w.logFile = nil
 			}
+			w.logMu.Unlock()
 			return
 		case <-ticker.C:
 			w.mu.RLock()
@@ -128,13 +139,21 @@ func (w *Watchdog) Start(ctx context.Context) {
 			w.mu.RUnlock()
 
 			if active {
-				w.check()
+				w.checkWithContext(ctx)
 			}
 		}
 	}
 }
 
 func (w *Watchdog) check() {
+	w.checkWithContext(context.Background())
+}
+
+func (w *Watchdog) checkWithContext(ctx context.Context) {
+	if w.config.VerifiedFailover.Enabled {
+		w.checkVerified(ctx)
+		return
+	}
 	start := time.Now()
 
 	// A plain HTTP request: tproxy routes it transparently
@@ -652,9 +671,19 @@ func (w *Watchdog) writeLog(format string, args ...interface{}) {
 	}
 	w.mu.Unlock()
 
+	w.logMu.Lock()
 	if w.logFile != nil {
 		w.logFile.WriteString(msg + "\n")
+		w.logWrites++
+		if w.logWrites%60 == 0 {
+			if stat, err := w.logFile.Stat(); err == nil && stat.Size() > 1<<20 {
+				w.logFile.Close()
+				rotateLog(w.config.LogFile, 1<<20, 256<<10)
+				w.logFile, _ = os.OpenFile(w.config.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			}
+		}
 	}
+	w.logMu.Unlock()
 
 	if w.eventBus != nil {
 		w.eventBus.Publish(sse.Event{Type: "log", Data: msg})
@@ -685,16 +714,20 @@ func (w *Watchdog) GetStatus() models.Status {
 	}
 
 	status := models.Status{
-		Connected:      w.connected && !restarting,
-		XrayRunning:    coreRunning,
-		Restarting:     restarting,
-		Latency:        w.lastLatency,
-		LastCheck:      w.lastCheck,
-		WatchdogActive: w.active,
-		Core:           rt.Core,
-		Mode:           rt.Mode,
-		XKeenVersion:   rt.Version,
-		Generation:     rt.Generation,
+		VerifiedFailover:    w.config.VerifiedFailover.Enabled,
+		CountryPriority:     append([]string{}, w.config.VerifiedFailover.CountryPriority...),
+		AllowOtherCountries: w.config.VerifiedFailover.AllowOtherCountries,
+		ExcludedNames:       append([]string{}, w.config.VerifiedFailover.ExcludeNameContains...),
+		Connected:           w.connected && !restarting,
+		XrayRunning:         coreRunning,
+		Restarting:          restarting,
+		Latency:             w.lastLatency,
+		LastCheck:           w.lastCheck,
+		WatchdogActive:      w.active,
+		Core:                rt.Core,
+		Mode:                rt.Mode,
+		XKeenVersion:        rt.Version,
+		Generation:          rt.Generation,
 	}
 
 	// Uptime
@@ -713,6 +746,12 @@ func (w *Watchdog) GetStatus() models.Status {
 	if server := w.subscription.GetActiveServer(); server != nil {
 		status.CurrentServer = server.Name
 		status.Protocol = server.Protocol
+	}
+	if status.CurrentServer == "" && w.config.VerifiedFailover.Enabled {
+		status.CurrentServer = "Текущий сервер из конфигурации"
+		if ob, err := xkeen.SingleProxy(w.config.OutboundsFile); err == nil {
+			status.Protocol, _ = ob["protocol"].(string)
+		}
 	}
 
 	return status

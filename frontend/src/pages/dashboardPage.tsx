@@ -10,6 +10,7 @@ import { Controls } from '@/components/controls'
 import { XKeenCard } from '@/components/xkeenCard'
 import { SettingsCard } from '@/components/settingsCard'
 import { PasskeyCard } from '@/components/passkeyCard'
+import { AutomationCard, countryName } from '@/components/automationCard'
 import { LogViewer } from '@/components/logViewer'
 import { Button } from '@/components/ui/button'
 import { IconLogout, IconLoader2 } from '@tabler/icons-react'
@@ -114,7 +115,10 @@ export function DashboardPage() {
 
     const stop = useMutation({
         mutationFn: () => api.post('/api/xkeen/stop'),
-        onSettled: () => qc.invalidateQueries({ queryKey: ['status'] }),
+        onSettled: () => {
+            qc.invalidateQueries({ queryKey: ['status'] })
+            qc.invalidateQueries({ queryKey: ['automation'] })
+        },
     })
 
     const poolAction = useMutation({
@@ -155,7 +159,10 @@ export function DashboardPage() {
                 old ? { ...old, watchdog_active: active } : old,
             )
         },
-        onSettled: () => qc.invalidateQueries({ queryKey: ['status'] }),
+        onSettled: () => {
+            qc.invalidateQueries({ queryKey: ['status'] })
+            qc.invalidateQueries({ queryKey: ['automation'] })
+        },
     })
 
     const s = status.data
@@ -199,6 +206,41 @@ export function DashboardPage() {
             </header>
             {/* Контент */}
             <main className='max-w-6xl mx-auto px-4 py-4'>
+                {s?.verified_failover && (
+                    <div className='mb-4 rounded-lg border p-4 text-sm space-y-1'>
+                        <p className='font-semibold'>
+                            Автоматическая замена сервера
+                        </p>
+                        <p>
+                            Приоритет:{' '}
+                            {s.country_priority?.length
+                                ? s.country_priority
+                                      .map(countryName)
+                                      .join(' → ')
+                                : 'порядок подписки'}
+                            .
+                            {s.allow_other_countries
+                                ? ' Остальные страны также разрешены.'
+                                : ' Используются только выбранные страны.'}
+                        </p>
+                        <p className='text-muted-foreground'>
+                            Рабочий сервер сохраняется. Доступность проверяется
+                            через VPN; новый сервер применяется с проверкой и
+                            откатом.
+                        </p>
+                    </div>
+                )}
+                {(selectServer.error ||
+                    updateSub.error ||
+                    refreshSub.error ||
+                    toggleWatchdog.error) && (
+                    <p role='alert' className='mb-4 text-sm text-red-400'>
+                        {selectServer.error?.message ||
+                            updateSub.error?.message ||
+                            refreshSub.error?.message ||
+                            toggleWatchdog.error?.message}
+                    </p>
+                )}
                 <div className='grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4'>
                     <div className='space-y-4'>
                         <SubscriptionForm
@@ -209,6 +251,9 @@ export function DashboardPage() {
                                 updateSub.isPending || refreshSub.isPending
                             }
                         />
+                        {s?.verified_failover && (
+                            <AutomationCard servers={servers.data ?? []} />
+                        )}
                         <Controls
                             watchdogActive={s?.watchdog_active ?? false}
                             coreRunning={s?.xray_running ?? false}
@@ -228,20 +273,24 @@ export function DashboardPage() {
                                 restarting
                             }
                         />
-                        <XKeenCard
-                            status={s}
-                            pool={pool.data}
-                            onEnablePool={() => poolAction.mutate('enable')}
-                            onDisablePool={() => poolAction.mutate('disable')}
-                            onSyncPool={() => poolAction.mutate('sync')}
-                            onSyncMihomo={() => syncMihomo.mutate()}
-                            lastSync={poolAction.data}
-                            loading={
-                                poolAction.isPending ||
-                                syncMihomo.isPending ||
-                                restarting
-                            }
-                        />
+                        {!s?.verified_failover && (
+                            <XKeenCard
+                                status={s}
+                                pool={pool.data}
+                                onEnablePool={() => poolAction.mutate('enable')}
+                                onDisablePool={() =>
+                                    poolAction.mutate('disable')
+                                }
+                                onSyncPool={() => poolAction.mutate('sync')}
+                                onSyncMihomo={() => syncMihomo.mutate()}
+                                lastSync={poolAction.data}
+                                loading={
+                                    poolAction.isPending ||
+                                    syncMihomo.isPending ||
+                                    restarting
+                                }
+                            />
+                        )}
                         <SettingsCard />
                         <PasskeyCard />
                         <LogViewer
@@ -254,6 +303,7 @@ export function DashboardPage() {
                     </div>
                     <div>
                         <ServerList
+                            verified={s?.verified_failover}
                             servers={servers.data ?? []}
                             onSelect={id => selectServer.mutate(id)}
                             onSetCountry={(id, country) =>

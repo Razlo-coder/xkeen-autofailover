@@ -2,7 +2,9 @@ package xkeen
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -49,7 +51,7 @@ func ListPath(rt Runtime, name string) (string, ListKind, error) {
 func ReadSettings(path string) (map[string]interface{}, error) {
 	var cfg map[string]interface{}
 	if err := ReadJSONC(path, &cfg); err != nil {
-		if strings.Contains(err.Error(), "no such file") {
+		if errors.Is(err, os.ErrNotExist) {
 			return map[string]interface{}{}, nil
 		}
 		return nil, err
