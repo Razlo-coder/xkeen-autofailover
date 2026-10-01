@@ -103,6 +103,11 @@ func TestQualityPostRestartFailureRollsBack(t *testing.T) {
 	if string(before) != string(after) || w.subscription.GetActiveServer() != nil {
 		t.Fatal("slow post-restart result was committed instead of rolled back")
 	}
+	for _, server := range w.subscription.GetServers() {
+		if server.Address != "192.0.2.4" && server.Latency != 3000 {
+			t.Fatal("list retained a fast pre-restart latency after a slow confirmation")
+		}
+	}
 	if _, err := os.Stat(w.config.DataDir + "/failover-pending.json"); !os.IsNotExist(err) {
 		t.Fatal("rollback journal remained")
 	}

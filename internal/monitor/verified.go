@@ -232,6 +232,8 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 		if err := w.verifiedApplier.ApplyChecked(ctx, candidate, func(confirmed xkeen.ProbeResult) error {
 			result = confirmed
 			if !w.acceptableQuality(confirmed) {
+				server.Latency = confirmed.Latency
+				w.subscription.UpdateLatencies([]models.Server{server})
 				return fmt.Errorf("задержка после перезапуска %d мс превышает допустимую", confirmed.Latency)
 			}
 			return nil
