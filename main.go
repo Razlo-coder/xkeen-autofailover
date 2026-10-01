@@ -317,19 +317,16 @@ func loadConfig(path string) (*models.Config, error) {
 	}
 
 	cfg := &models.Config{
-		Port:          3000,
-		DataDir:       "data",
-		XKeenPath:     "/opt/sbin/xkeen",
-		OutboundsFile: "/opt/etc/xray/configs/04_outbounds.json",
-		XrayAPIAddr:   "127.0.0.1:10085",
-		CheckInterval: 120,
-		CheckURL:      "https://www.google.com",
-		MaxFails:      3,
-		LogFile:       "xkeen-panel.log",
-		VerifiedFailover: models.VerifiedFailoverConfig{
-			AllowOtherCountries: true,
-			BypassMark:          255, ProbeTimeoutSec: 8, RetryIntervalSec: 120,
-		},
+		Port:             3000,
+		DataDir:          "data",
+		XKeenPath:        "/opt/sbin/xkeen",
+		OutboundsFile:    "/opt/etc/xray/configs/04_outbounds.json",
+		XrayAPIAddr:      "127.0.0.1:10085",
+		CheckInterval:    120,
+		CheckURL:         "https://www.google.com",
+		MaxFails:         3,
+		LogFile:          "xkeen-panel.log",
+		VerifiedFailover: models.DefaultVerifiedFailover(),
 
 		ProbeTimeoutMs:     2000,
 		ProbeConcurrency:   20,
@@ -368,6 +365,9 @@ func loadConfig(path string) (*models.Config, error) {
 			return nil, fmt.Errorf("check_interval должен быть >= 10, max_fails >= 2")
 		}
 		p := cfg.VerifiedFailover
+		if !models.ValidConnectionSettings(p.QualityThresholdMs, p.QualityFailCount, p.PriorityCheckSec) {
+			return nil, fmt.Errorf("неверные параметры качества соединения или возврата к приоритету")
+		}
 		if (!p.AllowOtherCountries && len(p.CountryPriority) == 0) || p.BypassMark < 1 || p.ProbeTimeoutSec < 1 || p.ProbeTimeoutSec > 60 || p.RetryIntervalSec < 30 {
 			return nil, fmt.Errorf("неверные параметры verified_failover")
 		}

@@ -29,6 +29,12 @@ func (a *VerifiedApplier) removeJournal() error {
 }
 
 func (a *VerifiedApplier) Apply(ctx context.Context, outbound map[string]interface{}) error {
+	return a.ApplyChecked(ctx, outbound, nil)
+}
+
+// ApplyChecked can reject a reachable but slow connection before committing
+// the journal. Manual selection retains the reachability-only Apply behavior.
+func (a *VerifiedApplier) ApplyChecked(ctx context.Context, outbound map[string]interface{}, check func(ProbeResult) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -87,6 +93,11 @@ func (a *VerifiedApplier) Apply(ctx context.Context, outbound map[string]interfa
 	result, err := a.Probe(ctx, actual)
 	if err != nil || !result.OK || !a.Running() {
 		return a.rollback(fmt.Errorf("VPN не подтвердился после перезапуска"), true)
+	}
+	if check != nil {
+		if err := check(result); err != nil {
+			return a.rollback(err, true)
+		}
 	}
 	if err := a.removeJournal(); err != nil {
 		// Keeping a pending journal after reporting success would undo the

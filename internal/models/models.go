@@ -77,6 +77,22 @@ type VerifiedFailoverConfig struct {
 	BypassMark           int      `yaml:"bypass_mark"`
 	ProbeTimeoutSec      int      `yaml:"probe_timeout_sec"`
 	RetryIntervalSec     int      `yaml:"retry_interval_sec"`
+	QualityEnabled       bool     `yaml:"quality_enabled"`
+	QualityThresholdMs   int      `yaml:"quality_threshold_ms"`
+	QualityFailCount     int      `yaml:"quality_fail_count"`
+	ReturnToPriority     bool     `yaml:"return_to_priority"`
+	PriorityCheckSec     int      `yaml:"priority_check_sec"`
+}
+
+// DefaultVerifiedFailover also supplies missing fields in older YAML installs.
+func DefaultVerifiedFailover() VerifiedFailoverConfig {
+	return VerifiedFailoverConfig{AllowOtherCountries: true, BypassMark: 255,
+		ProbeTimeoutSec: 8, RetryIntervalSec: 120, QualityEnabled: true,
+		QualityThresholdMs: 1500, QualityFailCount: 3, ReturnToPriority: true, PriorityCheckSec: 300}
+}
+
+func ValidConnectionSettings(threshold, count, interval int) bool {
+	return threshold >= 100 && threshold <= 60000 && count >= 1 && count <= 10 && interval >= 60 && interval <= 86400
 }
 
 // AutomationSettings is user-editable in the panel and stored independently
@@ -88,6 +104,11 @@ type AutomationSettings struct {
 	PreferredServerNames []string `json:"preferred_server_names"`
 	ExcludedServerNames  []string `json:"excluded_server_names"`
 	ExcludeNameContains  []string `json:"exclude_name_contains"`
+	QualityEnabled       bool     `json:"quality_enabled"`
+	QualityThresholdMs   int      `json:"quality_threshold_ms"`
+	QualityFailCount     int      `json:"quality_fail_count"`
+	ReturnToPriority     bool     `json:"return_to_priority"`
+	PriorityCheckSec     int      `json:"priority_check_sec"`
 }
 
 // User is the panel account (data/user.json).
@@ -134,6 +155,8 @@ type Status struct {
 	AllowOtherCountries bool      `json:"allow_other_countries"`
 	ExcludedNames       []string  `json:"excluded_names,omitempty"`
 	Connected           bool      `json:"connected"`
+	QualityDegraded     bool      `json:"quality_degraded"`
+	QualityThresholdMs  int       `json:"quality_threshold_ms"`
 	XrayRunning         bool      `json:"xray_running"`
 	Restarting          bool      `json:"restarting"`
 	CurrentServer       string    `json:"current_server"`

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,10 +11,47 @@ import (
 	"xkeen-panel/internal/xkeen"
 )
 
+func TestOlderAutomationFileKeepsNewDefaultsAndSavedOptOut(t *testing.T) {
+	w := verifiedWatchdog(t)
+	path := filepath.Join(w.config.DataDir, "automation.json")
+	old := `{"enabled":true,"country_priority":["NL","DE"],"allow_other_countries":false,"preferred_server_names":[],"excluded_server_names":[],"exclude_name_contains":["Extra Whitelist2"]}`
+	if err := os.WriteFile(path, []byte(old), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.LoadAutomation(); err != nil {
+		t.Fatal(err)
+	}
+	s := w.GetAutomation()
+	if !s.QualityEnabled || s.QualityThresholdMs != 1500 || s.QualityFailCount != 3 || !s.ReturnToPriority || s.PriorityCheckSec != 300 {
+		t.Fatal("older file cleared new defaults")
+	}
+	s.QualityEnabled = false
+	s.ReturnToPriority = false
+	data, _ := json.Marshal(s)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.LoadAutomation(); err != nil {
+		t.Fatal(err)
+	}
+	if w.GetAutomation().QualityEnabled || w.GetAutomation().ReturnToPriority {
+		t.Fatal("explicit opt-out was overwritten by defaults")
+	}
+}
+
 func TestAutomationPersistsAndKeepsRotatedNamePreferences(t *testing.T) {
 	w := verifiedWatchdog(t)
-	settings := models.AutomationSettings{Enabled: true, CountryPriority: []string{"de", "NL", "de"}, AllowOtherCountries: true,
-		PreferredServerNames: []string{"Amsterdam Extra"}, ExcludedServerNames: []string{"Unsupported"}, ExcludeNameContains: []string{"Whitelist2"}}
+	settings := w.GetAutomation()
+	settings.Enabled = true
+	settings.CountryPriority = []string{"de", "NL", "de"}
+	settings.AllowOtherCountries = true
+	settings.PreferredServerNames = []string{"Amsterdam Extra"}
+	settings.ExcludedServerNames = []string{"Unsupported"}
+	settings.ExcludeNameContains = []string{"Whitelist2"}
+	settings.QualityThresholdMs = 1200
+	settings.QualityFailCount = 2
+	settings.ReturnToPriority = false
+	settings.PriorityCheckSec = 600
 	if err := w.SaveAutomation(settings); err != nil {
 		t.Fatal(err)
 	}

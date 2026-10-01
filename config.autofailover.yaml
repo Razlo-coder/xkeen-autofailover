@@ -23,3 +23,8 @@ verified_failover:
   bypass_mark: 255
   probe_timeout_sec: 8
   retry_interval_sec: 120
+  quality_enabled: true
+  quality_threshold_ms: 1500
+  quality_fail_count: 3
+  return_to_priority: true
+  priority_check_sec: 300

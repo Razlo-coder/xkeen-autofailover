@@ -15,6 +15,9 @@ import (
 var countryCode = regexp.MustCompile(`^[A-Z]{2}$`)
 
 func normalizeAutomation(s models.AutomationSettings) (models.AutomationSettings, error) {
+	if !models.ValidConnectionSettings(s.QualityThresholdMs, s.QualityFailCount, s.PriorityCheckSec) {
+		return s, fmt.Errorf("порог задержки: 100–60000 мс; плохих проверок: 1–10; интервал возврата: 60–86400 секунд")
+	}
 	normalize := func(values []string, countries bool) ([]string, error) {
 		if len(values) > 300 {
 			return nil, fmt.Errorf("слишком много правил: максимум 300")
@@ -67,7 +70,9 @@ func (w *Watchdog) automationLocked() models.AutomationSettings {
 	copyList := func(v []string) []string { return append([]string{}, v...) }
 	return models.AutomationSettings{Enabled: w.config.WatchdogAutoStart, CountryPriority: copyList(p.CountryPriority),
 		AllowOtherCountries: p.AllowOtherCountries, PreferredServerNames: copyList(p.PreferredServerNames),
-		ExcludedServerNames: copyList(p.ExcludedServerNames), ExcludeNameContains: copyList(p.ExcludeNameContains)}
+		ExcludedServerNames: copyList(p.ExcludedServerNames), ExcludeNameContains: copyList(p.ExcludeNameContains),
+		QualityEnabled: p.QualityEnabled, QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
+		ReturnToPriority: p.ReturnToPriority, PriorityCheckSec: p.PriorityCheckSec}
 }
 
 func (w *Watchdog) applyAutomationLocked(s models.AutomationSettings) {
@@ -79,6 +84,12 @@ func (w *Watchdog) applyAutomationLocked(s models.AutomationSettings) {
 	w.config.VerifiedFailover.PreferredServerNames = s.PreferredServerNames
 	w.config.VerifiedFailover.ExcludedServerNames = s.ExcludedServerNames
 	w.config.VerifiedFailover.ExcludeNameContains = s.ExcludeNameContains
+	w.config.VerifiedFailover.QualityEnabled = s.QualityEnabled
+	w.config.VerifiedFailover.QualityThresholdMs = s.QualityThresholdMs
+	w.config.VerifiedFailover.QualityFailCount = s.QualityFailCount
+	w.config.VerifiedFailover.ReturnToPriority = s.ReturnToPriority
+	w.config.VerifiedFailover.PriorityCheckSec = s.PriorityCheckSec
+	w.qualityFailCount = 0
 }
 
 // LoadAutomation runs before background work. Existing YAML rules migrate
@@ -93,7 +104,8 @@ func (w *Watchdog) LoadAutomation() error {
 	if err != nil {
 		return err
 	}
-	var s models.AutomationSettings
+	// Overlay older files onto YAML/defaults instead of resetting new fields.
+	s := w.automationLocked()
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("настройки автоматизации: %w", err)
 	}

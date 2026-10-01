@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"xkeen-panel/internal/models"
 )
 
 func (h *Handlers) HandleGetAutomation(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +18,8 @@ func (h *Handlers) HandleSaveAutomation(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Этот режим автоматизации не включён"})
 		return
 	}
-	var settings models.AutomationSettings
+	// An older cached UI can still save its rules without clearing new options.
+	settings := h.watchdog.GetAutomation()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&settings); err != nil {

@@ -20,6 +20,11 @@ export type AutomationSettings = {
     preferred_server_names: string[]
     excluded_server_names: string[]
     exclude_name_contains: string[]
+    quality_enabled: boolean
+    quality_threshold_ms: number
+    quality_fail_count: number
+    return_to_priority: boolean
+    priority_check_sec: number
 }
 
 export type Status = {
@@ -28,6 +33,8 @@ export type Status = {
     allow_other_countries?: boolean
     excluded_names?: string[]
     connected: boolean
+    quality_degraded?: boolean
+    quality_threshold_ms?: number
     xray_running: boolean
     restarting: boolean
     current_server: string

@@ -126,8 +126,8 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
             </CardHeader>
             <CardContent className='space-y-4'>
                 <p className='text-xs text-muted-foreground'>
-                    Рабочее соединение сохраняется. При отказе подписка
-                    обновляется, затем проверяются серверы по этим правилам.
+                    При отказе или высокой задержке подписка обновляется, затем
+                    проверяются серверы по этим правилам.
                 </p>
                 <div className='flex items-center justify-between gap-2'>
                     <label htmlFor='automation-enabled' className='text-sm'>
@@ -248,6 +248,121 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                             Добавить
                         </Button>
                     </div>
+                </div>
+                <div className='space-y-3 border-t pt-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                        <label
+                            htmlFor='quality-enabled'
+                            className='text-sm font-medium'
+                        >
+                            Контроль качества
+                        </label>
+                        <Switch
+                            id='quality-enabled'
+                            checked={draft.quality_enabled}
+                            onCheckedChange={quality_enabled =>
+                                change({ quality_enabled })
+                            }
+                        />
+                    </div>
+                    <div className='grid grid-cols-2 gap-3'>
+                        <label
+                            htmlFor='quality-threshold'
+                            className='space-y-1 text-sm'
+                        >
+                            <span className='block'>Порог, мс</span>
+                            <input
+                                id='quality-threshold'
+                                type='number'
+                                min={100}
+                                max={60000}
+                                step={100}
+                                className={fieldClass}
+                                disabled={!draft.quality_enabled}
+                                value={draft.quality_threshold_ms}
+                                onChange={e =>
+                                    change({
+                                        quality_threshold_ms:
+                                            e.target.valueAsNumber || 0,
+                                    })
+                                }
+                            />
+                        </label>
+                        <label
+                            htmlFor='quality-count'
+                            className='space-y-1 text-sm'
+                        >
+                            <span className='block'>Проверок подряд</span>
+                            <input
+                                id='quality-count'
+                                type='number'
+                                min={1}
+                                max={10}
+                                step={1}
+                                className={fieldClass}
+                                disabled={!draft.quality_enabled}
+                                value={draft.quality_fail_count}
+                                onChange={e =>
+                                    change({
+                                        quality_fail_count:
+                                            e.target.valueAsNumber || 0,
+                                    })
+                                }
+                            />
+                        </label>
+                    </div>
+                    <p className='text-xs text-muted-foreground'>
+                        При задержке выше порога в нескольких проверках подряд
+                        ищется замена с допустимой задержкой. Если её нет,
+                        текущее соединение сохраняется. Пинг — время самого
+                        быстрого успешного HTTPS-ответа через VPN; скорость
+                        скачивания не измеряется.
+                    </p>
+                </div>
+                <div className='space-y-3 border-t pt-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                        <label
+                            htmlFor='return-priority'
+                            className='text-sm font-medium'
+                        >
+                            Возврат к приоритету
+                        </label>
+                        <Switch
+                            id='return-priority'
+                            checked={draft.return_to_priority}
+                            onCheckedChange={return_to_priority =>
+                                change({ return_to_priority })
+                            }
+                        />
+                    </div>
+                    <label
+                        htmlFor='priority-interval'
+                        className='block space-y-1 text-sm'
+                    >
+                        <span>Интервал проверки, мин</span>
+                        <input
+                            id='priority-interval'
+                            type='number'
+                            min={1}
+                            max={1440}
+                            step={1}
+                            className={fieldClass}
+                            disabled={!draft.return_to_priority}
+                            value={draft.priority_check_sec / 60}
+                            onChange={e =>
+                                change({
+                                    priority_check_sec:
+                                        (e.target.valueAsNumber || 0) * 60,
+                                })
+                            }
+                        />
+                    </label>
+                    <p className='text-xs text-muted-foreground'>
+                        Подписка обновляется перед поиском. Панель возвращается
+                        только к более приоритетной стране или серверу с
+                        допустимой задержкой. После любого выбора, включая
+                        ручной, до возврата выдерживается этот интервал.
+                    </p>
                 </div>
                 <details className='space-y-2'>
                     <summary className='cursor-pointer text-sm font-medium'>

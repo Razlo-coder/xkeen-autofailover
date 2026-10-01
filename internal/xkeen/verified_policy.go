@@ -111,35 +111,45 @@ func PolicyExclusion(s models.Server, policy models.VerifiedFailoverConfig) stri
 // retain subscription order. Endpoint changes do not reset name preferences.
 func PolicyCandidates(servers []models.Server, policy models.VerifiedFailoverConfig) []models.Server {
 	var allowed []models.Server
-	rank := map[string]int{}
-	for i, cc := range policy.CountryPriority {
-		rank[strings.ToUpper(strings.TrimSpace(cc))] = i
-	}
 	for _, s := range servers {
 		if PolicyExclusion(s, policy) == "" {
 			allowed = append(allowed, s)
 		}
 	}
-	countryRank := func(s models.Server) int {
-		if r, ok := rank[PolicyCountry(s)]; ok {
-			return r
-		}
-		return len(rank)
-	}
-	nameRank := func(s models.Server) int {
-		for i, name := range policy.PreferredServerNames {
-			if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(s.Name)) {
-				return i
-			}
-		}
-		return len(policy.PreferredServerNames)
-	}
 	sort.SliceStable(allowed, func(i, j int) bool {
-		ri, rj := countryRank(allowed[i]), countryRank(allowed[j])
-		if ri != rj {
-			return ri < rj
-		}
-		return nameRank(allowed[i]) < nameRank(allowed[j])
+		return PolicyBetter(allowed[i], allowed[j], policy)
 	})
 	return allowed
+}
+
+func policyRank(s models.Server, policy models.VerifiedFailoverConfig) (int, int) {
+	country, name := len(policy.CountryPriority), len(policy.PreferredServerNames)
+	for i, cc := range policy.CountryPriority {
+		if strings.EqualFold(strings.TrimSpace(cc), PolicyCountry(s)) {
+			country = i
+			break
+		}
+	}
+	for i, preferred := range policy.PreferredServerNames {
+		if strings.EqualFold(strings.TrimSpace(preferred), strings.TrimSpace(s.Name)) {
+			name = i
+			break
+		}
+	}
+	return country, name
+}
+
+// PolicyBetter compares explicit country/name preferences only. Subscription
+// order breaks selection ties, but never causes a healthy connection to rotate.
+func PolicyBetter(candidate, current models.Server, policy models.VerifiedFailoverConfig) bool {
+	cc, cn := policyRank(candidate, policy)
+	ac, an := policyRank(current, policy)
+	return cc < ac || (cc == ac && cn < an)
+}
+
+// A configured higher rank may reappear on the next subscription refresh even
+// when it is absent from the cached list.
+func PolicyHasHigherPriority(current models.Server, policy models.VerifiedFailoverConfig) bool {
+	country, name := policyRank(current, policy)
+	return country > 0 || name > 0
 }

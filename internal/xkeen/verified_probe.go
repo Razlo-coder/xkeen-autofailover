@@ -203,19 +203,23 @@ func (p *VPNProber) prepareOutbound(ctx context.Context, ob map[string]interface
 }
 
 func probeHTTPS(ctx context.Context, client *http.Client, urls []string) ProbeResult {
-	start := time.Now()
-	oks := make(chan bool, len(urls))
+	type response struct {
+		ok      bool
+		latency int
+	}
+	responses := make(chan response, len(urls))
 	for _, target := range urls {
 		go func(target string) {
+			start := time.Now()
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 			if err != nil {
-				oks <- false
+				responses <- response{}
 				return
 			}
 			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; xkeen-panel)")
 			resp, err := client.Do(req)
 			if err != nil {
-				oks <- false
+				responses <- response{}
 				return
 			}
 			defer resp.Body.Close()
@@ -227,20 +231,24 @@ func probeHTTPS(ctx context.Context, client *http.Client, urls []string) ProbeRe
 			if strings.Contains(target, "/cdn-cgi/trace") {
 				ok = ok && strings.Contains(string(body), "ip=")
 			}
-			oks <- ok
+			responses <- response{ok: ok, latency: int(time.Since(start).Milliseconds())}
 		}(target)
 	}
 	r := ProbeResult{Total: len(urls), Latency: -1}
 	for range urls {
-		if <-oks {
+		response := <-responses
+		if response.ok {
 			r.Successes++
+			if r.Latency < 0 || response.latency < r.Latency {
+				r.Latency = response.latency
+			}
 		}
 	}
 	// One reachable HTTPS destination proves the tunnel works. Requiring both
 	// would turn one website's outage into a needless server change.
 	r.OK = r.Successes > 0
-	if r.OK {
-		r.Latency = int(time.Since(start).Milliseconds())
-	}
+	// Report the fastest successful HTTPS exchange (including TLS and body),
+	// never the wait for another destination's timeout. This measures tunnel
+	// responsiveness, not ICMP latency or download throughput.
 	return r
 }

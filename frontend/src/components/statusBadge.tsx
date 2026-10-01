@@ -4,13 +4,15 @@ export function StatusBadge({
     connected,
     xrayRunning,
     latency,
+    qualityDegraded = false,
 }: {
     connected: boolean
     xrayRunning: boolean
     latency: number
+    qualityDegraded?: boolean
 }) {
     return (
-        <div className='flex items-center gap-3'>
+        <div className='flex flex-wrap items-center gap-3'>
             {/* Статус xray-процесса */}
             <div className='flex items-center gap-1.5'>
                 <div
@@ -31,17 +33,37 @@ export function StatusBadge({
                 <div
                     className={cn(
                         'w-2 h-2 rounded-full',
-                        connected
-                            ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
-                            : 'bg-zinc-500',
+                        connected && qualityDegraded
+                            ? 'bg-amber-500'
+                            : connected
+                              ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
+                              : 'bg-zinc-500',
                     )}
                 />
-                <span className='text-xs text-muted-foreground'>
-                    {connected ? 'online' : 'offline'}
+                <span
+                    className={cn(
+                        'text-xs',
+                        connected && qualityDegraded
+                            ? 'text-amber-400'
+                            : 'text-muted-foreground',
+                    )}
+                >
+                    {connected
+                        ? qualityDegraded
+                            ? 'высокая задержка'
+                            : 'online'
+                        : 'offline'}
                 </span>
                 {connected && latency > 0 && (
-                    <span className='text-xs text-muted-foreground'>
-                        {latency}ms
+                    <span
+                        className={cn(
+                            'text-xs',
+                            qualityDegraded
+                                ? 'text-amber-400'
+                                : 'text-muted-foreground',
+                        )}
+                    >
+                        {latency} мс
                     </span>
                 )}
             </div>

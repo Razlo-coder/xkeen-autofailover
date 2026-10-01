@@ -22,7 +22,9 @@ import (
 
 func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &models.Config{DataDir: dir, WatchdogAutoStart: false, VerifiedFailover: models.VerifiedFailoverConfig{Enabled: true, AllowOtherCountries: true}}
+	policy := models.DefaultVerifiedFailover()
+	policy.Enabled = true
+	cfg := &models.Config{DataDir: dir, WatchdogAutoStart: false, VerifiedFailover: policy}
 	um := auth.NewUserManager(dir)
 	const demoSecret = "JBSWY3DPEHPK3PXP"
 	if err := um.CreatePendingUser("preview", "preview-only-password", demoSecret); err != nil {
@@ -75,6 +77,12 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 	if out := request("GET", "/api/automation", "", true); !bytes.Contains(out.Body.Bytes(), []byte(`"country_priority":["DE","NL"]`)) {
 		t.Fatalf("normalised state not returned: %s", out.Body)
 	}
+	if !wd.GetAutomation().QualityEnabled || wd.GetAutomation().QualityThresholdMs != 1500 || !wd.GetAutomation().ReturnToPriority {
+		t.Fatal("saving from an older UI reset new connection settings")
+	}
+	if out := request("PUT", "/api/automation", `{"quality_threshold_ms":0}`, true); out.Code != http.StatusBadRequest {
+		t.Fatal("invalid quality threshold accepted")
+	}
 	if out := request("POST", "/api/watchdog/toggle", `{"active":false}`, true); out.Code != http.StatusOK || wd.GetAutomation().Enabled {
 		t.Fatal("toggle did not persist disable")
 	}
@@ -85,6 +93,16 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 		// checks. Real probe cancellation and application are tested in monitor.
 		previewHandler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			switch r.Method + " " + r.URL.Path {
+			case "GET /api/status":
+				// Demonstrate a reachable but slow VPN without contacting a router.
+				status := wd.GetStatus()
+				settings := wd.GetAutomation()
+				status.Connected = true
+				status.XrayRunning = true
+				status.Latency = 1800
+				status.QualityDegraded = settings.QualityEnabled && status.Latency > settings.QualityThresholdMs
+				rw.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(rw).Encode(status)
 			case "GET /api/servers/check":
 				rw.Header().Set("Content-Type", "text/event-stream")
 				rw.Header().Set("Cache-Control", "no-cache")

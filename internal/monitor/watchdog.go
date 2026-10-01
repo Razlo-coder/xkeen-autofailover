@@ -32,6 +32,11 @@ type Watchdog struct {
 	verifiedCheckCancel context.CancelFunc
 	manualSelections    int
 	lastVerifiedAttempt time.Time
+	lastPriorityAttempt time.Time
+	lastVerifiedSwitch  time.Time
+	verifiedCurrent     *models.Server
+	verifiedCurrentOB   map[string]interface{}
+	qualityFailCount    int
 	verifiedProbe       func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
 	verifiedApplier     *xkeen.VerifiedApplier
 	config              *models.Config
@@ -62,15 +67,16 @@ type Watchdog struct {
 
 func NewWatchdog(cfg *models.Config, sub *xkeen.SubscriptionManager, det *xkeen.Detector) *Watchdog {
 	return &Watchdog{
-		config:       cfg,
-		subscription: sub,
-		detector:     det,
-		active:       false, // off by default, switched on from the UI
-		startTime:    time.Now(),
-		lastLatency:  -1,
-		blacklist:    make(map[string]time.Time),
-		badNodes:     make(map[string]time.Time),
-		health:       NewHealthChecker(cfg.HealthCheckURLs, cfg.HealthFailThreshold, cfg.HealthQuorum),
+		config:             cfg,
+		subscription:       sub,
+		detector:           det,
+		active:             false, // off by default, switched on from the UI
+		startTime:          time.Now(),
+		lastVerifiedSwitch: time.Now(),
+		lastLatency:        -1,
+		blacklist:          make(map[string]time.Time),
+		badNodes:           make(map[string]time.Time),
+		health:             NewHealthChecker(cfg.HealthCheckURLs, cfg.HealthFailThreshold, cfg.HealthQuorum),
 	}
 }
 
@@ -722,6 +728,8 @@ func (w *Watchdog) GetStatus() models.Status {
 		AllowOtherCountries: w.config.VerifiedFailover.AllowOtherCountries,
 		ExcludedNames:       append([]string{}, w.config.VerifiedFailover.ExcludeNameContains...),
 		Connected:           w.connected && !restarting,
+		QualityDegraded:     w.config.VerifiedFailover.Enabled && w.connected && !restarting && w.config.VerifiedFailover.QualityEnabled && w.lastLatency > w.config.VerifiedFailover.QualityThresholdMs,
+		QualityThresholdMs:  w.config.VerifiedFailover.QualityThresholdMs,
 		XrayRunning:         coreRunning,
 		Restarting:          restarting,
 		Latency:             w.lastLatency,

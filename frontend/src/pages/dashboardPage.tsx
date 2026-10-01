@@ -193,6 +193,7 @@ export function DashboardPage() {
                                 connected={s?.connected ?? false}
                                 xrayRunning={s?.xray_running ?? false}
                                 latency={s?.latency_ms ?? -1}
+                                qualityDegraded={s?.quality_degraded ?? false}
                             />
                             {s?.current_server && (
                                 <span className='text-xs text-muted-foreground'>
@@ -228,8 +229,9 @@ export function DashboardPage() {
                                 : ' Используются только выбранные страны.'}
                         </p>
                         <p className='text-muted-foreground'>
-                            Рабочий сервер сохраняется. Доступность проверяется
-                            через VPN; новый сервер применяется с проверкой и
+                            Панель проверяет доступность и задержку через VPN.
+                            Контроль качества и возврат к приоритетным серверам
+                            настраиваются ниже. Замена применяется с проверкой и
                             откатом.
                         </p>
                     </div>

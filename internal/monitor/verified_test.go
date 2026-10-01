@@ -23,7 +23,12 @@ func verifiedWatchdog(t *testing.T) *Watchdog {
 	path := filepath.Join(dir, "04_outbounds.json")
 	fixture := `{"outbounds":[{"tag":"vless-reality","protocol":"vless","settings":{"address":"192.0.2.1","port":443,"id":"00000000-0000-4000-8000-000000000001","encryption":"none"},"streamSettings":{"network":"tcp"}},{"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}]}`
 	os.WriteFile(path, []byte(fixture), 0600)
-	cfg := &models.Config{DataDir: dir, OutboundsFile: path, MaxFails: 2, BlacklistTTLSec: 300, VerifiedFailover: models.VerifiedFailoverConfig{Enabled: true, CountryPriority: []string{"NL", "DE"}, ExcludeNameContains: []string{"Extra Whitelist2"}, RetryIntervalSec: 120}}
+	policy := models.DefaultVerifiedFailover()
+	policy.Enabled = true
+	policy.CountryPriority = []string{"NL", "DE"}
+	policy.AllowOtherCountries = false
+	policy.ExcludeNameContains = []string{"Extra Whitelist2"}
+	cfg := &models.Config{DataDir: dir, OutboundsFile: path, MaxFails: 2, BlacklistTTLSec: 300, VerifiedFailover: policy}
 	w := NewWatchdog(cfg, xkeen.NewSubscriptionManager(dir), xkeen.NewDetector(t.TempDir(), "", "", "", "", "", ""))
 	w.active = true
 	w.verifiedApplier = &xkeen.VerifiedApplier{Path: path, DataDir: dir, Validate: func() error { return nil }, Restart: func() error { return nil }, Running: func() bool { return true }}
