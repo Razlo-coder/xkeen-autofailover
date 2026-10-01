@@ -1,7 +1,6 @@
 package xkeen
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -95,12 +94,9 @@ func parseVMess(uri string) (*models.Server, error) {
 	encoded := strings.TrimPrefix(uri, "vmess://")
 
 	// Decode base64
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	decoded, err := decodeShareBase64(encoded)
 	if err != nil {
-		decoded, err = base64.RawStdEncoding.DecodeString(encoded)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка декодирования vmess: %w", err)
-		}
+		return nil, fmt.Errorf("ошибка декодирования vmess: %w", err)
 	}
 
 	var vmessConfig map[string]interface{}
@@ -161,59 +157,34 @@ func parseTrojan(uri string) (*models.Server, error) {
 
 // parseShadowsocks parses ss://base64@host:port#name or ss://base64#name
 func parseShadowsocks(uri string) (*models.Server, error) {
-	// Strip the scheme
 	raw := strings.TrimPrefix(uri, "ss://")
-
-	// Take the name from the fragment
 	name := ""
 	if idx := strings.LastIndex(raw, "#"); idx != -1 {
 		name = raw[idx+1:]
 		raw = raw[:idx]
 	}
-	name, _ = url.QueryUnescape(name)
-
-	var host string
-	var port int
-
-	// Form 1: base64@host:port
-	if atIdx := strings.LastIndex(raw, "@"); atIdx != -1 {
-		hostPort := raw[atIdx+1:]
-		h, p, err := net.SplitHostPort(hostPort)
-		if err == nil {
-			host = h
-			port, _ = strconv.Atoi(p)
-		}
-	} else {
-		// Form 2: everything in base64
-		decoded, err := base64.URLEncoding.DecodeString(raw)
+	name, err := url.PathUnescape(name)
+	if err != nil {
+		return nil, fmt.Errorf("неверное название Shadowsocks")
+	}
+	if !strings.Contains(raw, "@") {
+		// Legacy links encode the complete endpoint. Queries belong outside
+		// that payload and must not be mistaken for part of its base64.
+		decoded, err := decodeShareBase64(strings.Split(raw, "?")[0])
 		if err != nil {
-			decoded, err = base64.RawURLEncoding.DecodeString(raw)
-			if err != nil {
-				decoded, err = base64.StdEncoding.DecodeString(raw)
-				if err != nil {
-					return nil, fmt.Errorf("не удалось декодировать ss URI")
-				}
-			}
+			return nil, fmt.Errorf("не удалось декодировать ss URI")
 		}
-
-		// method:password@host:port
-		parts := string(decoded)
-		if atIdx := strings.LastIndex(parts, "@"); atIdx != -1 {
-			hostPort := parts[atIdx+1:]
-			h, p, err := net.SplitHostPort(hostPort)
-			if err == nil {
-				host = h
-				port, _ = strconv.Atoi(p)
-			}
-		}
+		raw = string(decoded)
 	}
-
-	if host == "" {
-		return nil, fmt.Errorf("ss: не удалось извлечь адрес")
+	u, err := url.Parse("ss://" + raw)
+	if err != nil || u.User == nil {
+		return nil, fmt.Errorf("неверная ссылка Shadowsocks")
 	}
-	if port == 0 {
-		port = 443
+	port, err := endpointPort(u)
+	if err != nil {
+		return nil, err
 	}
+	host := u.Hostname()
 	if name == "" {
 		name = host
 	}

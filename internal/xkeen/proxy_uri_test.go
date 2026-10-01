@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"xkeen-panel/internal/models"
@@ -42,6 +43,44 @@ func TestProviderIndependentProxyLinks(t *testing.T) {
 				os.WriteFile(path, data, 0600)
 				if output, err := exec.Command(bin, "run", "-test", "-config", path).CombinedOutput(); err != nil {
 					t.Fatalf("Xray rejected generated %s config: %s", tc.protocol, output)
+				}
+			}
+		})
+	}
+}
+
+func TestSubscriptionImportShareLinkVariants(t *testing.T) {
+	vmessJSON := []byte(`{"ps":">>>>>>>>>","add":"192.0.2.2","port":8443,"id":"00000000-0000-4000-8000-000000000002","aid":0,"net":"tcp"}`)
+	vmessURL := base64.RawURLEncoding.EncodeToString(vmessJSON)
+	if !strings.ContainsAny(vmessURL, "-_") {
+		t.Fatal("VMess fixture must exercise URL-safe alphabet")
+	}
+	ssUser := base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:test-password"))
+	cases := []struct{ name, protocol, uri string }{
+		{"vmess-url-safe", "vmess", "vmess://" + vmessURL},
+		{"ss-sip002-path", "shadowsocks", "ss://" + ssUser + "@192.0.2.2:8443/#Node%2BOne"},
+		{"ss-plaintext", "shadowsocks", "ss://aes-128-gcm:test-password@192.0.2.2:8443#Node"},
+		{"ss-legacy-raw-standard", "shadowsocks", "ss://" + base64.RawStdEncoding.EncodeToString([]byte("aes-128-gcm:test-password@192.0.2.2:8443")) + "#Node"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, wrap := range []func(string) string{
+				func(s string) string { return s },
+				func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) },
+			} {
+				servers, err := ParseSubscription(wrap(tc.uri))
+				if err != nil || len(servers) != 1 {
+					t.Fatalf("import failed: %v, count=%d", err, len(servers))
+				}
+				s := servers[0]
+				if s.Address != "192.0.2.2" || s.Port != 8443 || s.Protocol != tc.protocol || s.RawURI != tc.uri {
+					t.Fatalf("incorrect imported endpoint: %+v", s)
+				}
+				if tc.name == "ss-sip002-path" && s.Name != "Node+One" {
+					t.Fatalf("fragment name changed: %q", s.Name)
+				}
+				if _, err := buildProxyURI(&s, "proxy", formatFlat); err != nil {
+					t.Fatalf("imported link cannot generate outbound: %v", err)
 				}
 			}
 		})
