@@ -201,8 +201,13 @@ func (w *Watchdog) RefreshVerified(newURL string) ([]models.Server, error) {
 }
 
 func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, error) {
+	finishSelection := w.prioritizeManualSelection()
+	defer finishSelection()
 	w.operationMu.Lock()
 	defer w.operationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if xkeen.IsRestarting() {
 		return nil, fmt.Errorf("дождитесь завершения перезапуска")
 	}
@@ -241,8 +246,16 @@ func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, 
 }
 
 func (w *Watchdog) CheckVerifiedServers(ctx context.Context, emit func(models.Server)) ([]models.Server, error) {
+	ctx, finishCheck, err := w.beginVerifiedCheck(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishCheck()
 	w.operationMu.Lock()
 	defer w.operationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	w.configureVerified()
 	current, err := xkeen.SingleProxy(w.config.OutboundsFile)
 	if err != nil {
@@ -258,6 +271,10 @@ func (w *Watchdog) CheckVerifiedServers(ctx context.Context, emit func(models.Se
 			continue
 		}
 		r, err := w.verifiedProbe(ctx, ob)
+		if err := ctx.Err(); err != nil {
+			w.subscription.UpdateLatencies(checked)
+			return checked, err
+		}
 		s.Latency = -1
 		if err == nil && r.OK {
 			s.Latency = r.Latency

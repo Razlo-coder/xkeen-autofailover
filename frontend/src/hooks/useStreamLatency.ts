@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { getToken, clearToken } from '@/lib/api'
 import type { Server } from '@/types'
@@ -7,6 +7,21 @@ export function useStreamLatency() {
     const qc = useQueryClient()
     const [checking, setChecking] = useState(false)
     const esRef = useRef<EventSource | null>(null)
+
+    const cancel = useCallback(() => {
+        const es = esRef.current
+        esRef.current = null
+        es?.close()
+        setChecking(false)
+    }, [])
+
+    useEffect(
+        () => () => {
+            esRef.current?.close()
+            esRef.current = null
+        },
+        [],
+    )
 
     const check = useCallback(() => {
         if (esRef.current) return
@@ -19,36 +34,31 @@ export function useStreamLatency() {
         esRef.current = es
 
         es.addEventListener('latency', e => {
+            if (esRef.current !== es) return
             const { id, latency_ms } = JSON.parse(e.data)
             qc.setQueryData<Server[]>(['servers'], old =>
-                old?.map(s =>
-                    s.id === id ? { ...s, latency_ms } : s,
-                ),
+                old?.map(s => (s.id === id ? { ...s, latency_ms } : s)),
             )
         })
 
         es.addEventListener('done', () => {
-            setChecking(false)
-            es.close()
-            esRef.current = null
+            if (esRef.current === es) cancel()
         })
 
         es.addEventListener('close', () => {
-            es.close()
-            esRef.current = null
+            if (esRef.current === es) cancel()
         })
 
         es.onerror = () => {
-            setChecking(false)
-            es.close()
-            esRef.current = null
+            if (esRef.current !== es) return
+            cancel()
 
             if (!getToken()) {
                 clearToken()
                 window.location.href = '/login'
             }
         }
-    }, [qc])
+    }, [qc, cancel])
 
-    return { check, checking }
+    return { check, checking, cancel }
 }

@@ -29,8 +29,11 @@ export function DashboardPage() {
 
     // SSE: status, logs and restart events in real time
     useEventSource()
-    const { check: checkLatency, checking: checkingLatency } =
-        useStreamLatency()
+    const {
+        check: checkLatency,
+        checking: checkingLatency,
+        cancel: cancelLatency,
+    } = useStreamLatency()
 
     const status = useQuery({
         queryKey: ['status'],
@@ -86,6 +89,7 @@ export function DashboardPage() {
     const selectServer = useMutation({
         mutationFn: (id: number) => api.post('/api/servers/select', { id }),
         onMutate: id => {
+            cancelLatency()
             qc.setQueryData<Server[]>(['servers'], old =>
                 old?.map(s => ({ ...s, active: s.id === id })),
             )
@@ -303,18 +307,14 @@ export function DashboardPage() {
                     </div>
                     <div>
                         <ServerList
-                            verified={s?.verified_failover}
+                            checking={checkingLatency}
                             servers={servers.data ?? []}
                             onSelect={id => selectServer.mutate(id)}
                             onSetCountry={(id, country) =>
                                 setCountry.mutate({ id, country })
                             }
                             onCheckAll={checkLatency}
-                            loading={
-                                selectServer.isPending ||
-                                checkingLatency ||
-                                restarting
-                            }
+                            loading={selectServer.isPending || restarting}
                         />
                     </div>
                 </div>

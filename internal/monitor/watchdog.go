@@ -28,6 +28,9 @@ const (
 
 type Watchdog struct {
 	operationMu         sync.Mutex
+	verifiedCheckMu     sync.Mutex
+	verifiedCheckCancel context.CancelFunc
+	manualSelections    int
 	lastVerifiedAttempt time.Time
 	verifiedProbe       func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
 	verifiedApplier     *xkeen.VerifiedApplier

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"xkeen-panel/internal/models"
 	"xkeen-panel/internal/xkeen"
@@ -27,6 +28,93 @@ func verifiedWatchdog(t *testing.T) *Watchdog {
 	w.active = true
 	w.verifiedApplier = &xkeen.VerifiedApplier{Path: path, DataDir: dir, Validate: func() error { return nil }, Restart: func() error { return nil }, Running: func() bool { return true }}
 	return w
+}
+
+func TestManualSelectionCancelsBulkPingWithoutOverlappingProbes(t *testing.T) {
+	w := verifiedWatchdog(t)
+	importVerified(t, w)
+	pingStarted := make(chan struct{})
+	pingCancelled := make(chan struct{})
+	var probeCalls atomic.Int32
+	var runningProbes atomic.Int32
+	var overlapping atomic.Bool
+	w.verifiedProbe = func(ctx context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		if runningProbes.Add(1) > 1 {
+			overlapping.Store(true)
+		}
+		defer runningProbes.Add(-1)
+		if probeCalls.Add(1) == 1 {
+			close(pingStarted)
+			<-ctx.Done()
+			close(pingCancelled)
+			return xkeen.ProbeResult{}, ctx.Err()
+		}
+		return xkeen.ProbeResult{OK: true, Latency: 15}, nil
+	}
+	w.verifiedApplier.Probe = w.verifiedProbe
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pingDone := make(chan error, 1)
+	go func() {
+		_, err := w.CheckVerifiedServers(ctx, nil)
+		pingDone <- err
+	}()
+	select {
+	case <-pingStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bulk ping did not start")
+	}
+	if _, err := w.CheckVerifiedServers(ctx, nil); err == nil {
+		t.Fatal("a second bulk ping was allowed to queue")
+	}
+	selectionDone := make(chan error, 1)
+	go func() {
+		_, err := w.SelectVerified(ctx, 0) // Germany, while the NL ping is stalled.
+		selectionDone <- err
+	}()
+	select {
+	case err := <-selectionDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("manual selection waited for the full ping")
+	}
+	select {
+	case <-pingCancelled:
+	default:
+		t.Fatal("bulk probe was not cancelled")
+	}
+	if err := <-pingDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ping result = %v, want cancellation", err)
+	}
+	if overlapping.Load() || probeCalls.Load() != 3 {
+		t.Fatalf("probe overlap=%v, calls=%d; want one ping + two selection probes", overlapping.Load(), probeCalls.Load())
+	}
+	if active := w.subscription.GetActiveServer(); active == nil || active.ID != 0 {
+		t.Fatal("manual choice was not committed")
+	}
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("selected server was not applied")
+	}
+	if _, err := w.CheckVerifiedServers(ctx, nil); err != nil {
+		t.Fatalf("ping could not be restarted after selecting: %v", err)
+	}
+}
+
+func TestBulkPingDoesNotStartDuringManualSelection(t *testing.T) {
+	w := verifiedWatchdog(t)
+	finish := w.prioritizeManualSelection()
+	if _, _, err := w.beginVerifiedCheck(context.Background()); err == nil {
+		finish()
+		t.Fatal("bulk ping started while manual selection was pending")
+	}
+	finish()
+	_, stop, err := w.beginVerifiedCheck(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop()
 }
 
 func importVerified(t *testing.T, w *Watchdog) {

@@ -12,14 +12,14 @@ export function ServerList({
     onSetCountry,
     onCheckAll,
     loading,
-    verified = false,
+    checking = false,
 }: {
     servers: Server[]
     onSelect: (id: number) => void
     onSetCountry?: (id: number, country: string) => void
     onCheckAll: () => void
     loading: boolean
-    verified?: boolean
+    checking?: boolean
 }) {
     const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
     const sentinelRef = useRef<HTMLDivElement>(null)
@@ -66,10 +66,10 @@ export function ServerList({
                     variant='outline'
                     size='sm'
                     onClick={onCheckAll}
-                    disabled={loading}
+                    disabled={loading || checking}
                 >
                     <IconActivityHeartbeat className='size-4' />
-                    {loading ? 'Проверка...' : verified ? 'Проверить VPN' : 'Пинг'}
+                    {checking ? 'Пинг...' : 'Пинг'}
                 </Button>
             </div>
 
