@@ -35,6 +35,10 @@ jobs:
           chmod +x xray
           echo "TEST_XRAY_BIN=$RUNNER_TEMP/xray/xray" >> "$GITHUB_ENV"
       - run: go test -race ./... -count=1
+      - name: Verify marked sockets with router-level privileges
+        run: |
+          go test -c -o "$RUNNER_TEMP/xkeen-tests" ./internal/xkeen
+          sudo env TEST_REQUIRE_MARK=1 "$RUNNER_TEMP/xkeen-tests" -test.run '^TestSocketMark' -test.v
       - run: go vet ./...
       - name: Cross-compile supported builds
         run: |

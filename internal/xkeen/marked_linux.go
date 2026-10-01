@@ -10,6 +10,9 @@ import (
 )
 
 func socketMark(mark int) func(string, string, syscall.RawConn) error {
+	if mark == 0 {
+		return nil
+	}
 	return func(_, _ string, raw syscall.RawConn) error {
 		var err error
 		if e := raw.Control(func(fd uintptr) {
