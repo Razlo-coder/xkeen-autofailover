@@ -30,8 +30,11 @@ func TestParallelPingIsBoundedAndCoreActionCancelsAllWorkers(t *testing.T) {
 	w.config.ProbeConcurrency = 100 // conservative cap applies to old YAML too
 	current := mustSingle(t, w.config.OutboundsFile)
 	candidates := w.verifiedCandidates(current, nil, false)
-	candidates = append(candidates, candidates...) // four jobs, at most three active
-	started := make(chan struct{}, 4)
+	base := append([]verifiedCandidate{}, candidates...)
+	for range 4 {
+		candidates = append(candidates, base...)
+	} // ten jobs, at most eight active
+	started := make(chan struct{}, 10)
 	var active atomic.Int32
 	var maxActive atomic.Int32
 	w.verifiedProbe = func(ctx context.Context, _ map[string]interface{}) (xkeen.ProbeResult, error) {
@@ -53,11 +56,11 @@ func TestParallelPingIsBoundedAndCoreActionCancelsAllWorkers(t *testing.T) {
 		defer finish()
 		done <- w.probeVerifiedCandidates(ctx, candidates, false, func(int, xkeen.ProbeResult, error) bool { t.Error("cancelled result emitted"); return true })
 	}()
-	for range 3 {
+	for range 8 {
 		select {
 		case <-started:
 		case <-time.After(2 * time.Second):
-			t.Fatal("three probes did not run together")
+			t.Fatal("eight probes did not run together")
 		}
 	}
 	// Read APIs used to block behind the entire scan.
@@ -74,7 +77,7 @@ func TestParallelPingIsBoundedAndCoreActionCancelsAllWorkers(t *testing.T) {
 	if !errors.Is(awaitVerified(t, done), context.Canceled) {
 		t.Fatal("scan was not cancelled")
 	}
-	if active.Load() != 0 || maxActive.Load() != 3 {
+	if active.Load() != 0 || maxActive.Load() != 8 {
 		t.Fatalf("active=%d max=%d", active.Load(), maxActive.Load())
 	}
 }
@@ -82,7 +85,7 @@ func TestParallelPingIsBoundedAndCoreActionCancelsAllWorkers(t *testing.T) {
 func TestParallelFailoverKeepsPriorityAndReapsOtherProbesBeforeApply(t *testing.T) {
 	w := verifiedWatchdog(t)
 	importVerified(t, w)
-	w.config.ProbeConcurrency = 3
+	w.config.ProbeConcurrency = 8
 	lowerReady := make(chan struct{})
 	var active atomic.Int32
 	w.verifiedProbe = func(ctx context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {

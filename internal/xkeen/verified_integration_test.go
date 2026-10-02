@@ -149,7 +149,7 @@ func TestVerifiedRealXrayParallelLimitAndCancellation(t *testing.T) {
 	if bin == "" {
 		t.Skip("set TEST_XRAY_BIN for real-core integration")
 	}
-	started := make(chan struct{}, 4)
+	started := make(chan struct{}, 9)
 	var requests atomic.Int32
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -163,23 +163,23 @@ func TestVerifiedRealXrayParallelLimitAndCancellation(t *testing.T) {
 	ob := map[string]interface{}{"protocol": "freedom", "settings": map[string]interface{}{"address": "127.0.0.1", "port": 443}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := make(chan error, 4)
-	for range 4 {
+	done := make(chan error, 9)
+	for range 9 {
 		go func() { _, err := p.Probe(ctx, ob); done <- err }()
 	}
-	for range 3 {
+	for range 8 {
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
-			t.Fatal("three isolated real Xray probes did not run concurrently")
+			t.Fatal("eight isolated real Xray probes did not run concurrently")
 		}
 	}
 	p.once.Do(func() { t.Fatal("prober was not initialized") })
-	if len(p.slots) != 3 {
+	if len(p.slots) != 8 {
 		t.Fatal("child process limit exceeded")
 	}
 	cancel()
-	for range 4 {
+	for range 9 {
 		select {
 		case err := <-done:
 			if err == nil {
@@ -189,7 +189,7 @@ func TestVerifiedRealXrayParallelLimitAndCancellation(t *testing.T) {
 			t.Fatal("child Xray did not stop on cancellation")
 		}
 	}
-	if len(p.slots) != 0 || requests.Load() != 3 {
+	if len(p.slots) != 0 || requests.Load() != 8 {
 		t.Fatalf("unreaped slots=%d HTTPS requests=%d", len(p.slots), requests.Load())
 	}
 }

@@ -47,8 +47,8 @@ func (w *Watchdog) probeVerifiedCandidates(parent context.Context, candidates []
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	workers := w.config.ProbeConcurrency
-	if workers <= 0 || workers > 3 {
-		workers = 3
+	if workers <= 0 || workers > xkeen.VerifiedProbeConcurrency {
+		workers = xkeen.VerifiedProbeConcurrency
 	}
 	if workers > len(candidates) {
 		workers = len(candidates)

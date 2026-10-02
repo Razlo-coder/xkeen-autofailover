@@ -25,9 +25,11 @@ type ProbeResult struct {
 	Total     int
 }
 
+const VerifiedProbeConcurrency = 8
+
 // VPNProber runs a second, short-lived Xray with a private SOCKS listener. No
 // routing rule can turn these HTTPS requests into a direct-WAN false positive.
-// At most three children are allowed at once to bound memory on the router.
+// A fixed upper bound prevents an unbounded number of children on the router.
 type VPNProber struct {
 	Binary    string
 	Mark      int
@@ -45,7 +47,7 @@ func (p *VPNProber) Probe(ctx context.Context, outbound map[string]interface{}) 
 	}
 	ctx, probeCancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer probeCancel()
-	p.once.Do(func() { p.slots = make(chan struct{}, 3) })
+	p.once.Do(func() { p.slots = make(chan struct{}, VerifiedProbeConcurrency) })
 	select {
 	case p.slots <- struct{}{}:
 		defer func() { <-p.slots }()
