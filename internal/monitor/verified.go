@@ -69,7 +69,13 @@ func (w *Watchdog) rememberVerifiedCurrent(ob map[string]interface{}) {
 	} else if w.verifiedCurrentOB == nil || !xkeen.SameOutbound(ob, w.verifiedCurrentOB) {
 		w.verifiedCurrent = nil
 		w.verifiedCurrentOB = nil
+		if identity, ok := w.loadVerifiedIdentity(ob); ok {
+			w.verifiedCurrent = &models.Server{Name: identity.Name, Protocol: identity.Protocol,
+				Country: identity.Country, CountryOverride: identity.CountryOverride}
+			w.verifiedCurrentOB = ob
+		}
 	}
+	w.updateVerifiedIdentity(ob)
 }
 
 func (w *Watchdog) acceptableQuality(result xkeen.ProbeResult) bool {
@@ -78,8 +84,11 @@ func (w *Watchdog) acceptableQuality(result xkeen.ProbeResult) bool {
 }
 
 func (w *Watchdog) checkVerified(ctx context.Context) {
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
+	ctx, finish, err := w.lockVerifiedOperation(ctx, false)
+	if err != nil {
+		return
+	}
+	defer finish()
 	if !w.IsActive() || xkeen.IsRestarting() || ctx.Err() != nil {
 		return
 	}
@@ -142,7 +151,7 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 	w.lastVerifiedAttempt = time.Now()
 	// A fresh subscription is helpful, but recovery still works from the cached
 	// list if the provider is unreachable. Never apply its first entry blindly.
-	if _, err := w.subscription.Refresh(); err != nil {
+	if _, err := w.subscription.RefreshContext(ctx); err != nil {
 		w.writeLog("[VERIFY] Обновление недоступно, использую сохранённые серверы: %v", err)
 	}
 	w.rememberVerifiedCurrent(ob)
@@ -163,7 +172,7 @@ func (w *Watchdog) returnVerifiedPriority(ctx context.Context, current map[strin
 	w.lastPriorityAttempt = time.Now()
 	logicalCurrent := *w.verifiedCurrent
 	w.writeLog("[PRIORITY] Обновляю подписку и проверяю более приоритетные серверы")
-	if _, err := w.subscription.Refresh(); err != nil {
+	if _, err := w.subscription.RefreshContext(ctx); err != nil {
 		w.writeLog("[PRIORITY] Обновление недоступно, использую сохранённый список: %v", err)
 	}
 	w.rememberVerifiedCurrent(current)
@@ -180,6 +189,9 @@ func (w *Watchdog) failoverVerified(ctx context.Context, current map[string]inte
 }
 
 func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string]interface{}, higherThan *models.Server) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// If rollback previously failed, restore it before attempting another write;
 	// otherwise the new transaction could overwrite the only recovery copy.
 	if err := w.verifiedApplier.Recover(); err != nil {
@@ -190,41 +202,40 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 	} else {
 		return err
 	}
-	for _, server := range xkeen.PolicyCandidates(w.subscription.GetServers(), w.config.VerifiedFailover) {
+	candidates := w.verifiedCandidates(current, higherThan, true)
+	for len(candidates) > 0 {
 		if ctx.Err() != nil || !w.IsActive() {
 			return fmt.Errorf("автопереключение отменено")
 		}
-		if higherThan != nil && !xkeen.PolicyBetter(server, *higherThan, w.config.VerifiedFailover) {
-			continue
-		}
-		if w.isBlacklisted(server.RawURI) {
-			continue
-		}
-		candidate, err := xkeen.OutboundForServer(current, &server)
+		picked := -1
+		var result xkeen.ProbeResult
+		err := w.probeVerifiedCandidates(ctx, candidates, true, func(i int, r xkeen.ProbeResult, probeErr error) bool {
+			server := candidates[i].server
+			server.Latency = -1
+			if probeErr == nil && r.OK {
+				server.Latency = r.Latency
+			}
+			w.subscription.UpdateLatencies([]models.Server{server})
+			if probeErr != nil || !w.acceptableQuality(r) {
+				if probeErr == nil && r.OK {
+					w.writeLog("[QUALITY] %s слишком медленный: %d мс", server.Name, r.Latency)
+				}
+				w.blacklistServer(server.RawURI)
+				return true
+			}
+			picked, result = i, r
+			return false
+		})
 		if err != nil {
-			continue
-		}
-		// The failed current endpoint is held out on this recovery round. If it
-		// recovers naturally, the next normal check will retain it.
-		if xkeen.SameOutbound(candidate, current) && w.verifiedApplier.Running() {
-			continue
-		}
-		w.writeLog("[VERIFY] Проверяю %s", server.Name)
-		result, err := w.verifiedProbe(ctx, candidate)
-		if err := ctx.Err(); err != nil {
 			return err
 		}
-		server.Latency = result.Latency
-		if err != nil || !result.OK {
-			server.Latency = -1
+		if picked < 0 {
+			break
 		}
-		w.subscription.UpdateLatencies([]models.Server{server})
-		if err != nil || !w.acceptableQuality(result) {
-			if err == nil && result.OK {
-				w.writeLog("[QUALITY] %s слишком медленный: %d мс", server.Name, result.Latency)
-			}
-			w.blacklistServer(server.RawURI)
-			continue
+		server, candidate := candidates[picked].server, candidates[picked].outbound
+		candidates = candidates[picked+1:]
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if !w.IsActive() {
 			return fmt.Errorf("автопереключение выключено")
@@ -238,6 +249,9 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 			}
 			return nil
 		}); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			w.writeLog("[VERIFY] %s не применён: %v", server.Name, err)
 			w.blacklistServer(server.RawURI)
 			// A pending journal means rollback needs attention: stop this round.
@@ -273,21 +287,30 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 // RefreshVerified refreshes metadata only, keeping a working active config.
 // The same lock serializes refresh, manual selection and automatic failover.
 func (w *Watchdog) RefreshVerified(newURL string) ([]models.Server, error) {
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
+	return w.RefreshVerifiedContext(context.Background(), newURL)
+}
+
+func (w *Watchdog) RefreshVerifiedContext(ctx context.Context, newURL string) ([]models.Server, error) {
+	ctx, finish, err := w.lockVerifiedOperation(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	var servers []models.Server
 	if ob, e := xkeen.SingleProxy(w.config.OutboundsFile); e == nil {
 		w.rememberVerifiedCurrent(ob)
 	}
 	hadServers := len(w.subscription.GetServers()) > 0
-	var err error
 	if newURL != "" {
-		servers, err = w.subscription.UpdateURL(newURL)
+		servers, err = w.subscription.UpdateURLContext(ctx, newURL)
 	} else {
-		servers, err = w.subscription.Refresh()
+		servers, err = w.subscription.RefreshContext(ctx)
 	}
 	if ob, e := xkeen.SingleProxy(w.config.OutboundsFile); e == nil {
 		w.rememberVerifiedCurrent(ob)
+	}
+	if err == nil {
+		w.lastVerifiedAttempt = time.Time{}
 	}
 	if err == nil && newURL != "" && !hadServers && w.config.WatchdogAutoStart {
 		w.SetActive(true)
@@ -296,10 +319,11 @@ func (w *Watchdog) RefreshVerified(newURL string) ([]models.Server, error) {
 }
 
 func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, error) {
-	finishSelection := w.prioritizeManualSelection()
+	ctx, finishSelection, err := w.lockVerifiedOperation(ctx, true)
+	if err != nil {
+		return nil, err
+	}
 	defer finishSelection()
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -362,8 +386,11 @@ func (w *Watchdog) CheckVerifiedServers(ctx context.Context, emit func(models.Se
 		return nil, err
 	}
 	defer finishCheck()
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
+	ctx, finishOperation, err := w.lockVerifiedOperation(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer finishOperation()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -373,34 +400,29 @@ func (w *Watchdog) CheckVerifiedServers(ctx context.Context, emit func(models.Se
 		return nil, err
 	}
 	var checked []models.Server
-	for _, s := range xkeen.PolicyCandidates(w.subscription.GetServers(), w.config.VerifiedFailover) {
-		if err := ctx.Err(); err != nil {
-			return checked, err
-		}
-		ob, err := xkeen.OutboundForServer(current, &s)
-		if err != nil {
-			continue
-		}
-		r, err := w.verifiedProbe(ctx, ob)
-		if err := ctx.Err(); err != nil {
-			w.subscription.UpdateLatencies(checked)
-			return checked, err
-		}
+	candidates := w.verifiedCandidates(current, nil, false)
+	err = w.probeVerifiedCandidates(ctx, candidates, false, func(i int, r xkeen.ProbeResult, probeErr error) bool {
+		s := candidates[i].server
 		s.Latency = -1
-		if err == nil && r.OK {
+		if probeErr == nil && r.OK {
 			s.Latency = r.Latency
 		}
 		checked = append(checked, s)
+		w.subscription.UpdateLatencies([]models.Server{s})
 		if emit != nil {
 			emit(s)
 		}
-	}
-	w.subscription.UpdateLatencies(checked)
-	return checked, nil
+		return true
+	})
+	return checked, err
 }
 
 // LockCoreOperation prevents UI core changes from racing a failover transaction.
 func (w *Watchdog) LockCoreOperation() func() {
+	finish := w.prioritizeManualSelection()
 	w.operationMu.Lock()
-	return w.operationMu.Unlock
+	return func() {
+		w.operationMu.Unlock()
+		finish()
+	}
 }

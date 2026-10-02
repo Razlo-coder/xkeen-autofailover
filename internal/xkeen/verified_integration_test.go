@@ -144,6 +144,56 @@ func TestVerifiedRealXraySOCKSNoDirectFallback(t *testing.T) {
 	}
 }
 
+func TestVerifiedRealXrayParallelLimitAndCancellation(t *testing.T) {
+	bin := os.Getenv("TEST_XRAY_BIN")
+	if bin == "" {
+		t.Skip("set TEST_XRAY_BIN for real-core integration")
+	}
+	started := make(chan struct{}, 4)
+	var requests atomic.Int32
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer target.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(target.Certificate())
+	p := VPNProber{Binary: bin, URLs: []string{target.URL + "/generate_204"}, Timeout: 10 * time.Second, tlsConfig: &tls.Config{RootCAs: roots}}
+	ob := map[string]interface{}{"protocol": "freedom", "settings": map[string]interface{}{"address": "127.0.0.1", "port": 443}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 4)
+	for range 4 {
+		go func() { _, err := p.Probe(ctx, ob); done <- err }()
+	}
+	for range 3 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("three isolated real Xray probes did not run concurrently")
+		}
+	}
+	p.once.Do(func() { t.Fatal("prober was not initialized") })
+	if len(p.slots) != 3 {
+		t.Fatal("child process limit exceeded")
+	}
+	cancel()
+	for range 4 {
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Error("cancelled probe returned success")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("child Xray did not stop on cancellation")
+		}
+	}
+	if len(p.slots) != 0 || requests.Load() != 3 {
+		t.Fatalf("unreaped slots=%d HTTPS requests=%d", len(p.slots), requests.Load())
+	}
+}
+
 // This optional check reads real private inputs without copying credentials
 // into the repository. It validates only the allowed candidates, with no VPN
 // connections to any subscription node.

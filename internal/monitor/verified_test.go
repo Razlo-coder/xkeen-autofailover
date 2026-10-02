@@ -28,7 +28,7 @@ func verifiedWatchdog(t *testing.T) *Watchdog {
 	policy.CountryPriority = []string{"NL", "DE"}
 	policy.AllowOtherCountries = false
 	policy.ExcludeNameContains = []string{"Extra Whitelist2"}
-	cfg := &models.Config{DataDir: dir, OutboundsFile: path, MaxFails: 2, BlacklistTTLSec: 300, VerifiedFailover: policy}
+	cfg := &models.Config{DataDir: dir, OutboundsFile: path, MaxFails: 2, BlacklistTTLSec: 300, ProbeConcurrency: 1, VerifiedFailover: policy}
 	w := NewWatchdog(cfg, xkeen.NewSubscriptionManager(dir), xkeen.NewDetector(t.TempDir(), "", "", "", "", "", ""))
 	w.active = true
 	w.verifiedApplier = &xkeen.VerifiedApplier{Path: path, DataDir: dir, Validate: func() error { return nil }, Restart: func() error { return nil }, Running: func() bool { return true }}
@@ -196,8 +196,13 @@ func TestVerifiedFailureRefreshesChangedIPWithSameName(t *testing.T) {
 	w.verifiedApplier.Probe = w.verifiedProbe
 	w.checkVerified(context.Background())
 	w.checkVerified(context.Background())
-	if !reflect.DeepEqual(calls, []string{"192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.2"}) {
-		t.Fatalf("fresh IP probe order: %v", calls)
+	if len(calls) < 4 || calls[0] != "192.0.2.1" || calls[1] != "192.0.2.1" || calls[len(calls)-1] != "192.0.2.2" {
+		t.Fatalf("fresh IP was not checked and confirmed: %v", calls)
+	}
+	for _, addr := range calls[2:] {
+		if addr != "192.0.2.2" && addr != "192.0.2.5" {
+			t.Fatalf("retired endpoint probed: %s", addr)
+		}
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("subscription requests: got %d, want initial load + failure refresh", requests.Load())

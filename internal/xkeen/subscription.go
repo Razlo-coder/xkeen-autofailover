@@ -1,6 +1,7 @@
 package xkeen
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,15 +31,40 @@ func (sm *SubscriptionManager) SetHTTPClient(client *http.Client) { sm.client = 
 func (sm *SubscriptionManager) ReconcileActive(outbound map[string]interface{}) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.data.ActiveID = -1
+	sm.data.ActiveID = sm.matchingServerLocked(outbound)
+	for i := range sm.data.Servers {
+		sm.data.Servers[i].Active = i == sm.data.ActiveID
+	}
+}
+
+// MatchConfiguredServer is read-only. The saved selection is only a tie-breaker
+// between entries that really match the configuration, never evidence itself.
+func (sm *SubscriptionManager) MatchConfiguredServer(outbound map[string]interface{}) *models.Server {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	idx := sm.matchingServerLocked(outbound)
+	if idx < 0 {
+		return nil
+	}
+	server := sm.data.Servers[idx]
+	return &server
+}
+
+func (sm *SubscriptionManager) matchingServerLocked(outbound map[string]interface{}) int {
+	first := -1
 	for i := range sm.data.Servers {
 		ob, err := OutboundForServer(outbound, &sm.data.Servers[i])
 		match := err == nil && SameOutbound(outbound, ob)
-		sm.data.Servers[i].Active = match && sm.data.ActiveID < 0
-		if sm.data.Servers[i].Active {
-			sm.data.ActiveID = i
+		if match {
+			if i == sm.data.ActiveID {
+				return i
+			}
+			if first < 0 {
+				first = i
+			}
 		}
 	}
+	return first
 }
 
 func NewSubscriptionManager(dataDir string) *SubscriptionManager {
@@ -87,12 +113,20 @@ func (sm *SubscriptionManager) Save() error {
 
 // UpdateURL sets a new subscription URL, then downloads and parses it.
 func (sm *SubscriptionManager) UpdateURL(url string) ([]models.Server, error) {
-	servers, err := sm.downloadAndParse(url)
+	return sm.UpdateURLContext(context.Background(), url)
+}
+
+func (sm *SubscriptionManager) UpdateURLContext(ctx context.Context, url string) ([]models.Server, error) {
+	servers, err := sm.downloadAndParseContext(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 
 	sm.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		sm.mu.Unlock()
+		return nil, err
+	}
 	sm.data.URL = url
 	sm.applyRefreshLocked(servers)
 	sm.mu.Unlock()
@@ -102,6 +136,10 @@ func (sm *SubscriptionManager) UpdateURL(url string) ([]models.Server, error) {
 
 // Refresh reloads the servers from the current URL.
 func (sm *SubscriptionManager) Refresh() ([]models.Server, error) {
+	return sm.RefreshContext(context.Background())
+}
+
+func (sm *SubscriptionManager) RefreshContext(ctx context.Context) ([]models.Server, error) {
 	sm.mu.RLock()
 	url := sm.data.URL
 	sm.mu.RUnlock()
@@ -110,12 +148,16 @@ func (sm *SubscriptionManager) Refresh() ([]models.Server, error) {
 		return nil, fmt.Errorf("URL подписки не задан")
 	}
 
-	servers, err := sm.downloadAndParse(url)
+	servers, err := sm.downloadAndParseContext(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 
 	sm.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		sm.mu.Unlock()
+		return nil, err
+	}
 	sm.applyRefreshLocked(servers)
 	sm.mu.Unlock()
 
@@ -359,11 +401,19 @@ func (sm *SubscriptionManager) SelectNext() (*models.Server, error) {
 }
 
 func (sm *SubscriptionManager) downloadAndParse(url string) ([]models.Server, error) {
+	return sm.downloadAndParseContext(context.Background(), url)
+}
+
+func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url string) ([]models.Server, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	if sm.client != nil {
 		client = sm.client
 	}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, subscriptionDownloadError(err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, subscriptionDownloadError(err)
 	}

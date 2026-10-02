@@ -118,8 +118,8 @@ func (w *Watchdog) LoadAutomation() error {
 }
 
 func (w *Watchdog) GetAutomation() models.AutomationSettings {
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	return w.automationLocked()
 }
 
@@ -144,12 +144,16 @@ func (w *Watchdog) saveAutomationLocked(s models.AutomationSettings) error {
 }
 
 func (w *Watchdog) SaveAutomation(s models.AutomationSettings) error {
+	finish := w.prioritizeManualSelection()
+	defer finish()
 	w.operationMu.Lock()
 	defer w.operationMu.Unlock()
 	return w.saveAutomationLocked(s)
 }
 
 func (w *Watchdog) SetAutomationEnabled(enabled bool) error {
+	finish := w.prioritizeManualSelection()
+	defer finish()
 	w.operationMu.Lock()
 	defer w.operationMu.Unlock()
 	s := w.automationLocked()
@@ -158,11 +162,12 @@ func (w *Watchdog) SetAutomationEnabled(enabled bool) error {
 }
 
 func (w *Watchdog) PolicyServers() []models.Server {
-	w.operationMu.Lock()
-	defer w.operationMu.Unlock()
+	w.mu.RLock()
+	policy := w.config.VerifiedFailover
+	w.mu.RUnlock()
 	servers := w.subscription.GetServers()
 	for i := range servers {
-		reason := xkeen.PolicyExclusion(servers[i], w.config.VerifiedFailover)
+		reason := xkeen.PolicyExclusion(servers[i], policy)
 		eligible := reason == ""
 		servers[i].AutomaticEligible = &eligible
 		servers[i].ExclusionReason = reason

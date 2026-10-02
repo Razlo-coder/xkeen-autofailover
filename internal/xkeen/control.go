@@ -192,7 +192,11 @@ func Start(dispatcher string) (string, error) {
 
 // Stop stops the proxy core.
 func Stop(dispatcher string) (string, error) {
-	return runXkeen(dispatcher, quickTimeout, "-stop")
+	output, err := runXkeen(dispatcher, quickTimeout, "-stop")
+	runningMu.Lock()
+	runningCheckedAt = time.Time{}
+	runningMu.Unlock()
+	return output, err
 }
 
 // Status returns the human-readable output of `xkeen -status`.

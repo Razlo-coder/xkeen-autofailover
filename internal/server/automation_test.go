@@ -3,11 +3,14 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,22 +90,73 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 		t.Fatal("toggle did not persist disable")
 	}
 	if os.Getenv("TEST_UI_PREVIEW") == "1" {
+		// A large, entirely synthetic subscription exercises popup filtering.
+		previewServers := sub.GetServers()
+		for i := range previewServers {
+			uri := fmt.Sprintf("vless://00000000-0000-4000-8000-%012d@%s:443?type=tcp#%s", i+1, previewServers[i].Address, previewServers[i].Name)
+			if previewServers[i].Protocol == "trojan" {
+				uri = "trojan://demo-password@192.0.2.3:443?security=tls#Berlin"
+			}
+			previewServers[i].RawURI = uri
+		}
+		for i := 3; i < 70; i++ {
+			name := fmt.Sprintf("Amsterdam Node %02d", i)
+			address := fmt.Sprintf("192.0.2.%d", i+1)
+			previewServers = append(previewServers, models.Server{ID: i, Name: name, Protocol: "vless", Country: "NL", Address: address, Port: 443, Latency: -1,
+				RawURI: fmt.Sprintf("vless://00000000-0000-4000-8000-%012d@%s:443?type=tcp#%s", i+1, address, name)})
+		}
+		previewServers[0].Active = true
+		previewProvider := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			var uris []string
+			for _, s := range previewServers {
+				uris = append(uris, s.RawURI)
+			}
+			rw.Write([]byte(strings.Join(uris, "\n")))
+		}))
+		defer previewProvider.Close()
+		previewData, _ := json.Marshal(models.SubscriptionData{URL: previewProvider.URL, ActiveID: 0, Servers: previewServers})
+		os.WriteFile(filepath.Join(dir, "subscription.json"), previewData, 0600)
+		sub.Load()
+		cfg.OutboundsFile = filepath.Join(dir, "04_outbounds.json")
+		previewOutbound, err := xkeen.OutboundForServer(map[string]interface{}{"protocol": "vless", "tag": "vpn"}, &previewServers[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := xkeen.WriteOutboundsConfig(cfg.OutboundsFile, map[string]interface{}{"outbounds": []interface{}{previewOutbound}}); err != nil {
+			t.Fatal(err)
+		}
 		otp, _ := totp.GenerateCode(demoSecret, time.Now())
 		t.Logf("UI preview at http://127.0.0.1:18080; username=preview password=preview-only-password TOTP=%s", otp)
 		// Synthetic slow ping/selection endpoints are used only for browser UI
 		// checks. Real probe cancellation and application are tested in monitor.
+		var previewRunning atomic.Bool
+		previewRunning.Store(true)
 		previewHandler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			switch r.Method + " " + r.URL.Path {
 			case "GET /api/status":
-				// Demonstrate a reachable but slow VPN without contacting a router.
+				// Only the current-name lookup uses the real config; no router is contacted.
 				status := wd.GetStatus()
 				settings := wd.GetAutomation()
-				status.Connected = true
-				status.XrayRunning = true
-				status.Latency = 1800
+				status.Connected = previewRunning.Load()
+				status.XrayRunning = previewRunning.Load()
+				status.Latency = 291
+				if !status.Connected {
+					status.Latency = -1
+				}
 				status.QualityDegraded = settings.QualityEnabled && status.Latency > settings.QualityThresholdMs
 				rw.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(rw).Encode(status)
+			case "POST /api/xkeen/stop":
+				if err := wd.SetAutomationEnabled(false); err != nil {
+					t.Error(err)
+				}
+				previewRunning.Store(false)
+				t.Log("UI preview: stop accepted")
+				json.NewEncoder(rw).Encode(map[string]bool{"success": true})
+			case "POST /api/xkeen/start", "POST /api/xkeen/restart":
+				previewRunning.Store(true)
+				t.Log("UI preview: start/restart accepted")
+				json.NewEncoder(rw).Encode(map[string]bool{"success": true})
 			case "GET /api/servers/check":
 				rw.Header().Set("Content-Type", "text/event-stream")
 				rw.Header().Set("Cache-Control", "no-cache")
@@ -132,6 +186,20 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 				}
 				s, err := sub.SetActive(req.ID)
 				if err != nil {
+					http.Error(rw, err.Error(), http.StatusBadRequest)
+					return
+				}
+				current, err := xkeen.SingleProxy(cfg.OutboundsFile)
+				if err != nil {
+					http.Error(rw, err.Error(), http.StatusBadRequest)
+					return
+				}
+				chosen, err := xkeen.OutboundForServer(current, s)
+				if err != nil {
+					http.Error(rw, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if err := xkeen.WriteOutboundsConfig(cfg.OutboundsFile, map[string]interface{}{"outbounds": []interface{}{chosen}}); err != nil {
 					http.Error(rw, err.Error(), http.StatusBadRequest)
 					return
 				}

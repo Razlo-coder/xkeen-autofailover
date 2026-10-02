@@ -47,6 +47,25 @@ func TestSetActiveByRawURI(t *testing.T) {
 	}
 }
 
+func TestReconcilePreservesSelectedAliasForSameConnection(t *testing.T) {
+	servers, err := ParseSubscription("vless://00000000-0000-4000-8000-000000000001@192.0.2.1:443?type=tcp#First%20name\nvless://00000000-0000-4000-8000-000000000001@192.0.2.1:443?type=tcp#Chosen%20name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := loadSub(t, servers, 1)
+	outbound, err := OutboundForServer(map[string]interface{}{"protocol": "vless", "tag": "vpn"}, &servers[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm.ReconcileActive(outbound)
+	if selected := sm.GetActiveServer(); selected == nil || selected.Name != "Chosen name" {
+		t.Fatal("same connection reset the selected display name to the first entry")
+	}
+	if selected := sm.MatchConfiguredServer(outbound); selected == nil || selected.Name != "Chosen name" {
+		t.Fatal("status lookup lost selected alias")
+	}
+}
+
 // Regression: GetData must not hand out an alias of the internal server slice.
 func TestGetDataDeepCopy(t *testing.T) {
 	sm := loadSub(t, []models.Server{

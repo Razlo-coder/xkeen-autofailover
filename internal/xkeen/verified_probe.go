@@ -27,24 +27,31 @@ type ProbeResult struct {
 
 // VPNProber runs a second, short-lived Xray with a private SOCKS listener. No
 // routing rule can turn these HTTPS requests into a direct-WAN false positive.
-// Only one child is allowed at once to bound memory on the router.
+// At most three children are allowed at once to bound memory on the router.
 type VPNProber struct {
 	Binary    string
 	Mark      int
 	URLs      []string
 	Timeout   time.Duration
-	mu        sync.Mutex
+	once      sync.Once
+	slots     chan struct{}
 	tlsConfig *tls.Config // nil in production; test CA for local integration tests
 }
 
 func (p *VPNProber) Probe(ctx context.Context, outbound map[string]interface{}) (ProbeResult, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.Timeout <= 0 {
-		p.Timeout = 8 * time.Second
+	timeout := p.Timeout
+	if timeout <= 0 {
+		timeout = 8 * time.Second
 	}
-	ctx, probeCancel := context.WithTimeout(ctx, p.Timeout+10*time.Second)
+	ctx, probeCancel := context.WithTimeout(ctx, timeout+10*time.Second)
 	defer probeCancel()
+	p.once.Do(func() { p.slots = make(chan struct{}, 3) })
+	select {
+	case p.slots <- struct{}{}:
+		defer func() { <-p.slots }()
+	case <-ctx.Done():
+		return ProbeResult{}, ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, err
 	}
@@ -141,9 +148,9 @@ ready:
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{RootCAs: entwareRoots()}
 	}
-	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true, TLSHandshakeTimeout: p.Timeout, TLSClientConfig: tlsConfig}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true, TLSHandshakeTimeout: timeout, TLSClientConfig: tlsConfig}
 	defer transport.CloseIdleConnections()
-	result := probeHTTPS(ctx, &http.Client{Transport: transport, Timeout: p.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, p.URLs)
+	result := probeHTTPS(ctx, &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, p.URLs)
 	select {
 	case <-done:
 		exited = true

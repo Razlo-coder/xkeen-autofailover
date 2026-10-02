@@ -62,7 +62,7 @@ func (h *Handlers) HandleUpdateSubscription(w http.ResponseWriter, r *http.Reque
 	var servers []models.Server
 	var err error
 	if h.config.VerifiedFailover.Enabled {
-		servers, err = h.watchdog.RefreshVerified(req.URL)
+		servers, err = h.watchdog.RefreshVerifiedContext(r.Context(), req.URL)
 	} else {
 		servers, err = h.subscription.UpdateURL(req.URL)
 	}
@@ -89,7 +89,7 @@ func (h *Handlers) HandleRefreshSubscription(w http.ResponseWriter, r *http.Requ
 	var servers []models.Server
 	var err error
 	if h.config.VerifiedFailover.Enabled {
-		servers, err = h.watchdog.RefreshVerified("")
+		servers, err = h.watchdog.RefreshVerifiedContext(r.Context(), "")
 	} else {
 		servers, err = h.subscription.Refresh()
 	}
@@ -393,7 +393,13 @@ func (h *Handlers) HandleRestart(w http.ResponseWriter, r *http.Request) {
 	rt := h.detector.Runtime()
 	log.Printf("[RESTART-API] Кнопка рестарта нажата, xkeen=%s", rt.Dispatcher)
 
-	output, err := xkeen.Restart(rt.Dispatcher)
+	var output string
+	var err error
+	if h.config.VerifiedFailover.Enabled {
+		output, err = xkeen.RestartAndWait(rt.Dispatcher)
+	} else {
+		output, err = xkeen.Restart(rt.Dispatcher)
+	}
 	if err != nil {
 		log.Printf("[RESTART-API] Ошибка: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -430,10 +436,11 @@ func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {
 
 // HandleStop — POST /api/xkeen/stop
 func (h *Handlers) HandleStop(w http.ResponseWriter, r *http.Request) {
+	var warning string
 	if h.config.VerifiedFailover.Enabled {
+		h.watchdog.SetActive(false)
 		if err := h.watchdog.SetAutomationEnabled(false); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
+			warning = "Xray остановлен, но выключение автоматики не сохранено: " + err.Error()
 		}
 		defer h.watchdog.LockCoreOperation()()
 	}
@@ -446,7 +453,8 @@ func (h *Handlers) HandleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "output": output})
+	h.watchdog.MarkCoreStopped()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "output": output, "warning": warning})
 }
 
 // HandleSelfTest — POST /api/xkeen/selftest. Replaces the old CLI update: XKeen

@@ -71,6 +71,7 @@ export function DashboardPage() {
     const updateSub = useMutation({
         mutationFn: (url: string) =>
             api.post<{ servers: Server[] }>('/api/subscription', { url }),
+        onMutate: cancelLatency,
         onSettled: () => {
             qc.invalidateQueries({ queryKey: ['subscription'] })
             qc.invalidateQueries({ queryKey: ['servers'] })
@@ -80,6 +81,7 @@ export function DashboardPage() {
     const refreshSub = useMutation({
         mutationFn: () =>
             api.post<{ servers: Server[] }>('/api/subscription/refresh'),
+        onMutate: cancelLatency,
         onSettled: () => {
             qc.invalidateQueries({ queryKey: ['subscription'] })
             qc.invalidateQueries({ queryKey: ['servers'] })
@@ -106,19 +108,23 @@ export function DashboardPage() {
     const restart = useMutation({
         mutationFn: () => api.post('/api/xkeen/restart'),
         onMutate: () => {
+            cancelLatency()
             qc.setQueryData<Status>(['status'], old =>
                 old ? { ...old, restarting: true } : old,
             )
         },
+        onSettled: () => qc.invalidateQueries({ queryKey: ['status'] }),
     })
 
     const start = useMutation({
         mutationFn: () => api.post('/api/xkeen/start'),
+        onMutate: cancelLatency,
         onSettled: () => qc.invalidateQueries({ queryKey: ['status'] }),
     })
 
     const stop = useMutation({
-        mutationFn: () => api.post('/api/xkeen/stop'),
+        mutationFn: () => api.post<{ warning?: string }>('/api/xkeen/stop'),
+        onMutate: cancelLatency,
         onSettled: () => {
             qc.invalidateQueries({ queryKey: ['status'] })
             qc.invalidateQueries({ queryKey: ['automation'] })
@@ -159,6 +165,7 @@ export function DashboardPage() {
         mutationFn: (active: boolean) =>
             api.post('/api/watchdog/toggle', { active }),
         onMutate: active => {
+            if (!active) cancelLatency()
             qc.setQueryData<Status>(['status'], old =>
                 old ? { ...old, watchdog_active: active } : old,
             )
@@ -239,11 +246,19 @@ export function DashboardPage() {
                 {(selectServer.error ||
                     updateSub.error ||
                     refreshSub.error ||
+                    restart.error ||
+                    start.error ||
+                    stop.error ||
+                    stop.data?.warning ||
                     toggleWatchdog.error) && (
                     <p role='alert' className='mb-4 text-sm text-red-400'>
                         {selectServer.error?.message ||
                             updateSub.error?.message ||
                             refreshSub.error?.message ||
+                            restart.error?.message ||
+                            start.error?.message ||
+                            stop.error?.message ||
+                            stop.data?.warning ||
                             toggleWatchdog.error?.message}
                     </p>
                 )}
@@ -263,6 +278,8 @@ export function DashboardPage() {
                         <Controls
                             watchdogActive={s?.watchdog_active ?? false}
                             coreRunning={s?.xray_running ?? false}
+                            stopping={stop.isPending}
+                            canStop={restarting || selectServer.isPending}
                             onRestart={() => restart.mutate()}
                             onStart={() => start.mutate()}
                             onStop={() => stop.mutate()}

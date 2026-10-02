@@ -27,36 +27,40 @@ const (
 )
 
 type Watchdog struct {
-	operationMu         sync.Mutex
-	verifiedCheckMu     sync.Mutex
-	verifiedCheckCancel context.CancelFunc
-	manualSelections    int
-	lastVerifiedAttempt time.Time
-	lastPriorityAttempt time.Time
-	lastVerifiedSwitch  time.Time
-	verifiedCurrent     *models.Server
-	verifiedCurrentOB   map[string]interface{}
-	qualityFailCount    int
-	verifiedProbe       func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
-	verifiedApplier     *xkeen.VerifiedApplier
-	config              *models.Config
-	subscription        *xkeen.SubscriptionManager
-	detector            *xkeen.Detector
-	mu                  sync.RWMutex
-	active              bool
-	failCount           int
-	latencyHigh         int
-	lastCheck           time.Time
-	lastLatency         int
-	connected           bool
-	startTime           time.Time
-	logs                []string
-	logFile             *os.File
-	logMu               sync.Mutex
-	logWrites           int
-	eventBus            *sse.EventBus
-	geoip               *geoip.Matcher
-	blacklist           map[string]time.Time // keyed by RawURI, which survives reindexing
+	operationMu             sync.Mutex
+	verifiedCheckMu         sync.Mutex
+	verifiedCheckCancel     context.CancelFunc
+	verifiedOperationCancel context.CancelFunc
+	verifiedOperationEpoch  uint64
+	manualSelections        int
+	lastVerifiedAttempt     time.Time
+	lastPriorityAttempt     time.Time
+	lastVerifiedSwitch      time.Time
+	verifiedCurrent         *models.Server
+	verifiedCurrentOB       map[string]interface{}
+	verifiedDisplay         verifiedIdentity // protected by mu; bound to an outbound fingerprint
+	verifiedPersisted       verifiedIdentity // protected by operationMu; only successful disk writes
+	qualityFailCount        int
+	verifiedProbe           func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
+	verifiedApplier         *xkeen.VerifiedApplier
+	config                  *models.Config
+	subscription            *xkeen.SubscriptionManager
+	detector                *xkeen.Detector
+	mu                      sync.RWMutex
+	active                  bool
+	failCount               int
+	latencyHigh             int
+	lastCheck               time.Time
+	lastLatency             int
+	connected               bool
+	startTime               time.Time
+	logs                    []string
+	logFile                 *os.File
+	logMu                   sync.Mutex
+	logWrites               int
+	eventBus                *sse.EventBus
+	geoip                   *geoip.Matcher
+	blacklist               map[string]time.Time // keyed by RawURI, which survives reindexing
 
 	health       *HealthChecker
 	ticks        int
@@ -753,16 +757,25 @@ func (w *Watchdog) GetStatus() models.Status {
 		}
 	}
 
-	// Current server
-	if server := w.subscription.GetActiveServer(); server != nil {
-		status.CurrentServer = server.Name
-		status.Protocol = server.Protocol
-	}
-	if status.CurrentServer == "" && w.config.VerifiedFailover.Enabled {
-		status.CurrentServer = "Текущий сервер из конфигурации"
+	// A subscription refresh can remove the current IP or temporarily set a
+	// different active index. In verified mode use the actual configuration and
+	// its confirmed identity, rather than that index.
+	if w.config.VerifiedFailover.Enabled {
 		if ob, err := xkeen.SingleProxy(w.config.OutboundsFile); err == nil {
 			status.Protocol, _ = ob["protocol"].(string)
+			fingerprint, err := xkeen.OutboundFingerprint(ob)
+			if err == nil && fingerprint == w.verifiedDisplay.Fingerprint {
+				status.CurrentServer = w.verifiedDisplay.Name
+			} else if server := w.subscription.MatchConfiguredServer(ob); server != nil {
+				status.CurrentServer = server.Name
+			}
 		}
+		if status.CurrentServer == "" {
+			status.CurrentServer = "Текущий сервер из конфигурации"
+		}
+	} else if server := w.subscription.GetActiveServer(); server != nil {
+		status.CurrentServer = server.Name
+		status.Protocol = server.Protocol
 	}
 
 	return status
@@ -805,6 +818,9 @@ func (w *Watchdog) SetActive(active bool) {
 	w.mu.Lock()
 	w.active = active
 	w.mu.Unlock()
+	if !active {
+		w.CancelVerifiedWork()
+	}
 
 	if active {
 		w.writeLog("Watchdog включён")

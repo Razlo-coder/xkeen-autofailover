@@ -1,6 +1,7 @@
 package xkeen
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -37,26 +38,51 @@ func OutboundForServer(template map[string]interface{}, s *models.Server) (map[s
 // SameOutbound ignores display-only metadata and local socket options while
 // comparing credentials, endpoint, transport and TLS/Reality parameters.
 func SameOutbound(a, b map[string]interface{}) bool {
-	canonical := func(ob map[string]interface{}) interface{} {
-		data, _ := json.Marshal(ob)
-		var c map[string]interface{}
-		json.Unmarshal(data, &c)
-		delete(c, "tag")
-		ss := mapOf(c["streamSettings"])
-		delete(ss, "sockopt")
-		if ss != nil {
-			n, _ := ss["network"].(string)
-			ss["network"] = canonicalNetwork(n)
-			// Empty spiderX is equivalent to the generated default "/".
-			if rs := mapOf(ss["realitySettings"]); rs != nil {
-				if rs["spiderX"] == nil || rs["spiderX"] == "" {
-					rs["spiderX"] = "/"
-				}
+	ca, ea := canonicalOutbound(a)
+	cb, eb := canonicalOutbound(b)
+	return ea == nil && eb == nil && reflect.DeepEqual(ca, cb)
+}
+
+func canonicalOutbound(ob map[string]interface{}) (map[string]interface{}, error) {
+	if ob == nil {
+		return nil, fmt.Errorf("нет outbound")
+	}
+	data, err := json.Marshal(ob)
+	if err != nil {
+		return nil, err
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	delete(c, "tag")
+	ss := mapOf(c["streamSettings"])
+	delete(ss, "sockopt")
+	if ss != nil {
+		n, _ := ss["network"].(string)
+		ss["network"] = canonicalNetwork(n)
+		// Empty spiderX is equivalent to the generated default "/".
+		if rs := mapOf(ss["realitySettings"]); rs != nil {
+			if rs["spiderX"] == nil || rs["spiderX"] == "" {
+				rs["spiderX"] = "/"
 			}
 		}
-		return c
 	}
-	return reflect.DeepEqual(canonical(a), canonical(b))
+	return c, nil
+}
+
+// OutboundFingerprint binds display metadata to the actual connection without
+// storing credentials or assuming that a same-name subscription entry is live.
+func OutboundFingerprint(ob map[string]interface{}) (string, error) {
+	canonical, err := canonicalOutbound(ob)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
 
 func PolicyCountry(s models.Server) string {

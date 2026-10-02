@@ -20,6 +20,8 @@ export function Controls({
     onSelfTest,
     onToggleWatchdog,
     loading,
+    stopping,
+    canStop,
 }: {
     watchdogActive: boolean
     coreRunning: boolean
@@ -29,6 +31,8 @@ export function Controls({
     onSelfTest: () => Promise<SelfTestResult>
     onToggleWatchdog: (active: boolean) => void
     loading: boolean
+    stopping: boolean
+    canStop: boolean
 }) {
     const [confirming, setConfirming] = useState<'restart' | 'stop' | null>(
         null,
@@ -83,19 +87,21 @@ export function Controls({
                         : 'Перезапустить XKeen'}
                 </Button>
 
-                {coreRunning ? (
+                {coreRunning || canStop ? (
                     <Button
                         variant={
                             confirming === 'stop' ? 'destructive' : 'outline'
                         }
                         className='w-full'
                         onClick={() => confirm('stop', onStop)}
-                        disabled={loading}
+                        disabled={stopping}
                     >
                         <IconPlayerStop className='size-4' />
-                        {confirming === 'stop'
-                            ? 'Подтвердить остановку'
-                            : 'Остановить'}
+                        {stopping
+                            ? 'Останавливаю…'
+                            : confirming === 'stop'
+                              ? 'Подтвердить остановку'
+                              : 'Остановить'}
                     </Button>
                 ) : (
                     <Button

@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { SearchableSelect } from '@/components/ui/searchableSelect'
 import type { AutomationSettings, Server } from '@/types'
 
 const regionNames = new Intl.DisplayNames(['ru'], { type: 'region' })
@@ -148,23 +149,21 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                     </label>
                     {orderedList('country_priority', countryName)}
                     <div className='flex gap-2'>
-                        <select
+                        <SearchableSelect
                             id='country-choice'
-                            className={fieldClass}
+                            label='Приоритет стран'
+                            placeholder='Выберите страну'
                             value={country}
-                            onChange={e => setCountry(e.target.value)}
-                        >
-                            <option value=''>Выберите страну</option>
-                            {countries
+                            onChange={setCountry}
+                            options={countries
                                 .filter(
                                     cc => !draft.country_priority.includes(cc),
                                 )
-                                .map(cc => (
-                                    <option key={cc} value={cc}>
-                                        {countryName(cc)}
-                                    </option>
-                                ))}
-                        </select>
+                                .map(cc => ({
+                                    value: cc,
+                                    label: countryName(cc),
+                                }))}
+                        />
                         <Button
                             variant='outline'
                             disabled={!country}
@@ -212,26 +211,21 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                     </p>
                     {orderedList('preferred_server_names', value => value)}
                     <div className='flex gap-2'>
-                        <select
+                        <SearchableSelect
                             id='preferred-choice'
-                            className={fieldClass}
+                            label='Приоритет серверов'
+                            placeholder='Выберите сервер'
                             value={preferred}
-                            onChange={e => setPreferred(e.target.value)}
-                        >
-                            <option value=''>Выберите сервер</option>
-                            {names
+                            onChange={setPreferred}
+                            options={names
                                 .filter(
                                     name =>
                                         !draft.preferred_server_names.includes(
                                             name,
                                         ),
                                 )
-                                .map(name => (
-                                    <option key={name} value={name}>
-                                        {name}
-                                    </option>
-                                ))}
-                        </select>
+                                .map(name => ({ value: name, label: name }))}
+                        />
                         <Button
                             variant='outline'
                             disabled={!preferred}

@@ -100,6 +100,8 @@ export function SubscriptionForm({
                                 variant='outline'
                                 size='icon'
                                 onClick={onRefresh}
+                                aria-label='Обновить подписку'
+                                title='Обновить подписку и отменить текущие проверки'
                                 disabled={loading}
                             >
                                 <IconRefresh

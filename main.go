@@ -223,7 +223,7 @@ func runSubscriptionRefresh(ctx context.Context, cfg *models.Config, sm *xkeen.S
 			return
 		case <-ticker.C:
 			if cfg.VerifiedFailover.Enabled {
-				if servers, err := wd.RefreshVerified(""); err != nil {
+				if servers, err := wd.RefreshVerifiedContext(ctx, ""); err != nil {
 					wd.Log("[AUTO-UPDATE] %v", err)
 				} else {
 					wd.Log("[AUTO-UPDATE] Подписка обновлена (%d серверов)", len(servers))
