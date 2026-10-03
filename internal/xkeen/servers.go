@@ -5,12 +5,28 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"xkeen-panel/internal/models"
 )
+
+var numberedAutoName = regexp.MustCompile(`(?i)^\s*(?:⚡\s*)?(авто|auto)(\+?)\s*[·•]\s*[0-9]+\s*$`)
+
+// AutoGroupName recognises numbered members of one logical Auto profile.
+// Keep Auto and Auto+ separate; other numbered server names are unaffected.
+func AutoGroupName(name string) string {
+	parts := numberedAutoName.FindStringSubmatch(name)
+	if len(parts) == 0 {
+		return ""
+	}
+	if strings.EqualFold(parts[1], "auto") {
+		return "⚡ Auto" + parts[2]
+	}
+	return "⚡ Авто" + parts[2]
+}
 
 // ParseSubscription parses subscription content, base64 or plain text.
 func ParseSubscription(content string) ([]models.Server, error) {
@@ -50,6 +66,7 @@ func ParseSubscription(content string) ([]models.Server, error) {
 		}
 
 		server.ID = len(servers)
+		server.GroupName = AutoGroupName(server.Name)
 		server.RawURI = line
 		server.Country = detectCountry(server.Name)
 		servers = append(servers, *server)

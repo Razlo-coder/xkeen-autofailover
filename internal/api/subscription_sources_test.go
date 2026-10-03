@@ -35,17 +35,27 @@ func TestSubscriptionAPIAddsAndRemovesSecondSource(t *testing.T) {
 	if result := post(`{"source":1,"url":"` + provider.URL + `"}`); result.Code != http.StatusOK {
 		t.Fatalf("add second: %d %s", result.Code, result.Body)
 	}
+	rename := httptest.NewRecorder()
+	h.HandleRenameSubscription(rename, httptest.NewRequest(http.MethodPut, "/api/subscription/name", bytes.NewBufferString(`{"source":1,"name":"SkipVPN"}`)))
+	if rename.Code != http.StatusOK {
+		t.Fatalf("rename second: %d %s", rename.Code, rename.Body)
+	}
 	get := httptest.NewRecorder()
 	h.HandleGetSubscription(get, httptest.NewRequest(http.MethodGet, "/api/subscription", nil))
 	var response struct {
 		Sources []struct {
 			ID          int    `json:"id"`
+			Name        string `json:"name"`
 			URL         string `json:"url"`
 			ServerCount int    `json:"server_count"`
 		} `json:"sources"`
 	}
-	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil || len(response.Sources) != 2 || response.Sources[0].URL != primary.URL || response.Sources[0].ServerCount != 1 || response.Sources[1].URL != provider.URL || response.Sources[1].ServerCount != 1 {
+	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil || len(response.Sources) != 2 || response.Sources[0].URL != primary.URL || response.Sources[0].ServerCount != 1 || response.Sources[1].URL != provider.URL || response.Sources[1].ServerCount != 1 || response.Sources[1].Name != "SkipVPN" {
 		t.Fatalf("second source metadata incorrect: %s (%v)", get.Body, err)
+	}
+	reloaded := xkeen.NewSubscriptionManager(dir)
+	if err := reloaded.Load(); err != nil || reloaded.GetData().SecondaryName != "SkipVPN" {
+		t.Fatalf("renamed source was not persisted: %v", err)
 	}
 	if result := post(`{"source":1,"url":""}`); result.Code != http.StatusOK || len(sub.GetServers()) != 1 || sub.GetServers()[0].SourceID != 0 {
 		t.Fatalf("remove second: %d %s", result.Code, result.Body)

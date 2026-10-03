@@ -129,6 +129,7 @@ type User struct {
 type Server struct {
 	ID                int       `json:"id"`
 	SourceID          int       `json:"source_id"`
+	GroupName         string    `json:"group_name,omitempty"`
 	Name              string    `json:"name"`
 	Address           string    `json:"address"`
 	Port              int       `json:"port"`
@@ -146,8 +147,10 @@ type Server struct {
 // SubscriptionData is the stored subscription (data/subscription.json).
 type SubscriptionData struct {
 	URL                  string    `json:"url"`
+	Name                 string    `json:"name,omitempty"`
 	LastUpdated          time.Time `json:"last_updated"`
 	SecondaryURL         string    `json:"secondary_url,omitempty"`
+	SecondaryName        string    `json:"secondary_name,omitempty"`
 	SecondaryLastUpdated time.Time `json:"secondary_last_updated,omitempty"`
 	Servers              []Server  `json:"servers"`
 	ActiveID             int       `json:"active_id"`
@@ -202,7 +205,9 @@ type LoginRequest struct {
 
 // SelectServerRequest selects a server.
 type SelectServerRequest struct {
-	ID int `json:"id"`
+	ID        int    `json:"id"`
+	Source    int    `json:"source,omitempty"`
+	GroupName string `json:"group_name,omitempty"`
 }
 
 // SetCountryRequest overrides a server's country by hand.
@@ -215,4 +220,9 @@ type SetCountryRequest struct {
 type UpdateSubscriptionRequest struct {
 	URL    string `json:"url"`
 	Source int    `json:"source"`
+}
+
+type RenameSubscriptionRequest struct {
+	Source int    `json:"source"`
+	Name   string `json:"name"`
 }

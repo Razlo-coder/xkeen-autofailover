@@ -92,12 +92,22 @@ export function DashboardPage() {
         },
     })
 
+    const renameSub = useMutation({
+        mutationFn: ({ source, name }: { source: number; name: string }) =>
+            api.put('/api/subscription/name', { source, name }),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['subscription'] }),
+    })
+
     const selectServer = useMutation({
-        mutationFn: (id: number) => api.post('/api/servers/select', { id }),
-        onMutate: id => {
+        mutationFn: (
+            choice: { id: number } | { source: number; group_name: string },
+        ) => api.post('/api/servers/select', choice),
+        onMutate: choice => {
             cancelLatency()
             qc.setQueryData<Server[]>(['servers'], old =>
-                old?.map(s => ({ ...s, active: s.id === id })),
+                'id' in choice
+                    ? old?.map(s => ({ ...s, active: s.id === choice.id }))
+                    : old,
             )
             qc.setQueryData<Status>(['status'], old =>
                 old ? { ...old, restarting: true } : old,
@@ -263,6 +273,7 @@ export function DashboardPage() {
                 )}
                 {(selectServer.error ||
                     updateSub.error ||
+                    renameSub.error ||
                     refreshSub.error ||
                     restart.error ||
                     start.error ||
@@ -272,6 +283,7 @@ export function DashboardPage() {
                     <p role='alert' className='mb-4 text-sm text-red-400'>
                         {selectServer.error?.message ||
                             updateSub.error?.message ||
+                            renameSub.error?.message ||
                             refreshSub.error?.message ||
                             restart.error?.message ||
                             start.error?.message ||
@@ -288,8 +300,13 @@ export function DashboardPage() {
                                 updateSub.mutateAsync({ source, url })
                             }
                             onRefresh={() => refreshSub.mutate()}
+                            onRename={(source, name) =>
+                                renameSub.mutateAsync({ source, name })
+                            }
                             loading={
-                                updateSub.isPending || refreshSub.isPending
+                                updateSub.isPending ||
+                                refreshSub.isPending ||
+                                renameSub.isPending
                             }
                         />
                         {s?.verified_failover && (
@@ -348,7 +365,12 @@ export function DashboardPage() {
                         <ServerList
                             checking={checkingLatency}
                             servers={servers.data ?? []}
-                            onSelect={id => selectServer.mutate(id)}
+                            sources={subscription.data?.sources ?? []}
+                            groupEnabled={s?.verified_failover ?? false}
+                            onSelect={id => selectServer.mutate({ id })}
+                            onSelectGroup={(source, group_name) =>
+                                selectServer.mutate({ source, group_name })
+                            }
                             onSetCountry={(id, country) =>
                                 setCountry.mutate({ id, country })
                             }

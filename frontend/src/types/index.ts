@@ -1,6 +1,7 @@
 export type Server = {
     id: number
     source_id: number
+    group_name?: string
     name: string
     address: string
     port: number
@@ -99,6 +100,7 @@ export type SubscriptionInfo = {
     server_count: number
     sources: {
         id: number
+        name: string
         url: string
         last_updated: string
         server_count: number

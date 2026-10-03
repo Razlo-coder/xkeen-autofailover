@@ -448,6 +448,81 @@ func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, 
 	if chosen == nil {
 		return nil, fmt.Errorf("сервер исключён правилами автоматического выбора")
 	}
+	return w.selectVerifiedLocked(ctx, chosen)
+}
+
+// SelectVerifiedGroup checks all members in parallel and applies the fastest
+// reachable member. The panel keeps the regular single-outbound rollback path.
+func (w *Watchdog) SelectVerifiedGroup(ctx context.Context, source int, group string) (*models.Server, error) {
+	ctx, finishSelection, err := w.lockVerifiedOperation(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer finishSelection()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if xkeen.IsRestarting() {
+		return nil, fmt.Errorf("дождитесь завершения перезапуска")
+	}
+	w.configureVerified()
+	if err := w.verifiedApplier.Recover(); err != nil {
+		return nil, err
+	}
+	current, err := xkeen.SingleProxy(w.config.OutboundsFile)
+	if err != nil {
+		return nil, err
+	}
+	var members []verifiedCandidate
+	for _, candidate := range w.verifiedCandidates(current, nil, false) {
+		if candidate.server.SourceID == source && xkeen.AutoGroupName(candidate.server.Name) == group {
+			members = append(members, candidate)
+		}
+	}
+	if group == "" || len(members) == 0 {
+		return nil, fmt.Errorf("в группе нет разрешённых серверов")
+	}
+	type reachable struct {
+		server  models.Server
+		latency int
+	}
+	var working []reachable
+	err = w.probeVerifiedCandidates(ctx, members, false, func(i int, result xkeen.ProbeResult, probeErr error) bool {
+		server := members[i].server
+		server.Latency = -1
+		if probeErr == nil && result.OK && result.Latency >= 0 {
+			server.Latency = result.Latency
+			working = append(working, reachable{server: server, latency: result.Latency})
+		}
+		w.subscription.UpdateLatencies([]models.Server{server})
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(working) == 0 {
+		return nil, fmt.Errorf("ни один узел группы %s не ответил", group)
+	}
+	sort.SliceStable(working, func(i, j int) bool { return working[i].latency < working[j].latency })
+	var lastErr error
+	for _, member := range working {
+		if err := w.verifiedApplier.Recover(); err != nil {
+			return nil, err
+		}
+		chosen := member.server
+		selected, err := w.selectVerifiedLocked(ctx, &chosen)
+		if err == nil {
+			return selected, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("узлы группы не подтвердились после переключения: %w", lastErr)
+}
+
+func (w *Watchdog) selectVerifiedLocked(ctx context.Context, chosen *models.Server) (*models.Server, error) {
 	current, err := xkeen.SingleProxy(w.config.OutboundsFile)
 	if err != nil {
 		return nil, err

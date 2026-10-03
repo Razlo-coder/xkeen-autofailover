@@ -63,8 +63,8 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                 .filter(Boolean),
         ]),
     ].sort((a, b) => countryName(a).localeCompare(countryName(b), 'ru'))
-    const names = [...new Set(servers.map(s => s.name))].sort((a, b) =>
-        a.localeCompare(b, 'ru'),
+    const names = [...new Set(servers.map(s => s.group_name || s.name))].sort(
+        (a, b) => a.localeCompare(b, 'ru'),
     )
     const move = (key: OrderedKey, index: number, direction: number) => {
         const values = [...draft[key]]

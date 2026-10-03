@@ -99,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/subscription", handlers.HandleGetSubscription)
 			r.Post("/subscription", handlers.HandleUpdateSubscription)
+			r.Put("/subscription/name", handlers.HandleRenameSubscription)
 			r.Post("/subscription/refresh", handlers.HandleRefreshSubscription)
 
 			r.Get("/servers", handlers.HandleGetServers)

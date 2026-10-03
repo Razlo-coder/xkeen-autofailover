@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,6 +7,7 @@ import type { SubscriptionInfo } from '@/types'
 
 type Source = {
     id: number
+    name: string
     url: string
     last_updated: string
     server_count: number
@@ -26,14 +27,18 @@ function formatDate(dateStr: string) {
 function SourceForm({
     source,
     onUpdate,
+    onRename,
     loading,
 }: {
     source: Source
     onUpdate: (source: number, url: string) => Promise<unknown>
+    onRename: (source: number, name: string) => Promise<unknown>
     loading: boolean
 }) {
     const [url, setUrl] = useState('')
+    const [name, setName] = useState(source.name)
     const [expanded, setExpanded] = useState(false)
+    useEffect(() => setName(source.name), [source.name])
     const submit = async (event: React.FormEvent) => {
         event.preventDefault()
         if (!url.trim()) return
@@ -47,10 +52,29 @@ function SourceForm({
     return (
         <div className='space-y-2 border-t pt-3 first:border-t-0 first:pt-0'>
             <div className='flex items-center justify-between text-sm font-medium'>
-                <span>Подписка {source.id + 1}</span>
+                <span>{source.name || `Подписка ${source.id + 1}`}</span>
                 <span className='text-muted-foreground font-normal'>
                     {source.server_count} серверов
                 </span>
+            </div>
+            <div className='flex gap-2'>
+                <Input
+                    value={name}
+                    onChange={event => setName(event.target.value)}
+                    maxLength={40}
+                    placeholder={`Название подписки ${source.id + 1}`}
+                    aria-label={`Название подписки ${source.id + 1}`}
+                />
+                <Button
+                    type='button'
+                    variant='outline'
+                    disabled={loading || name.trim() === source.name}
+                    onClick={() =>
+                        void onRename(source.id, name.trim()).catch(() => {})
+                    }
+                >
+                    Назвать
+                </Button>
             </div>
             {source.url ? (
                 <div className='space-y-1 text-xs'>
@@ -117,22 +141,25 @@ function SourceForm({
 export function SubscriptionForm({
     subscription,
     onUpdate,
+    onRename,
     onRefresh,
     loading,
 }: {
     subscription: SubscriptionInfo | null
     onUpdate: (source: number, url: string) => Promise<unknown>
+    onRename: (source: number, name: string) => Promise<unknown>
     onRefresh: () => void
     loading: boolean
 }) {
     const sources = subscription?.sources ?? [
         {
             id: 0,
+            name: '',
             url: subscription?.url ?? '',
             last_updated: subscription?.last_updated ?? '',
             server_count: subscription?.server_count ?? 0,
         },
-        { id: 1, url: '', last_updated: '', server_count: 0 },
+        { id: 1, name: '', url: '', last_updated: '', server_count: 0 },
     ]
     return (
         <Card>
@@ -156,6 +183,7 @@ export function SubscriptionForm({
                         key={source.id}
                         source={source}
                         onUpdate={onUpdate}
+                        onRename={onRename}
                         loading={loading}
                     />
                 ))}

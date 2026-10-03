@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 	"xkeen-panel/internal/models"
 )
 
@@ -235,6 +237,23 @@ func (sm *SubscriptionManager) sourceURLLocked(source int) string {
 	return sm.data.URL
 }
 
+// SetSourceName changes only the display label; the URL and server list stay intact.
+func (sm *SubscriptionManager) SetSourceName(source int, name string) error {
+	name = strings.TrimSpace(name)
+	if source < 0 || source > 1 || utf8.RuneCountInString(name) > 40 ||
+		strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return fmt.Errorf("неверное название подписки")
+	}
+	sm.mu.Lock()
+	if source == 0 {
+		sm.data.Name = name
+	} else {
+		sm.data.SecondaryName = name
+	}
+	sm.mu.Unlock()
+	return sm.Save()
+}
+
 // applyRefreshLocked replaces only one source and keeps the active server and
 // country overrides tied to both source and URI. Call with sm.mu held.
 func (sm *SubscriptionManager) applyRefreshLocked(source int, servers []models.Server) {
@@ -329,6 +348,9 @@ func (sm *SubscriptionManager) GetServers() []models.Server {
 
 	result := make([]models.Server, len(sm.data.Servers))
 	copy(result, sm.data.Servers)
+	for i := range result {
+		result[i].GroupName = AutoGroupName(result[i].Name)
+	}
 	return result
 }
 

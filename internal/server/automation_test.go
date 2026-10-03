@@ -105,6 +105,12 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 			previewServers = append(previewServers, models.Server{ID: i, Name: name, Protocol: "vless", Country: "NL", Address: address, Port: 443, Latency: -1,
 				RawURI: fmt.Sprintf("vless://00000000-0000-4000-8000-%012d@%s:443?type=tcp#%s", i+1, address, name)})
 		}
+		for i := 0; i < 8; i++ {
+			name := fmt.Sprintf("⚡ Авто · %d", i+1)
+			address := fmt.Sprintf("198.51.100.%d", i+1)
+			previewServers = append(previewServers, models.Server{ID: 70 + i, SourceID: 1, Name: name, GroupName: "⚡ Авто", Protocol: "vless", Address: address, Port: 443, Latency: 120 + i*25,
+				RawURI: fmt.Sprintf("vless://00000000-0000-4000-8000-%012d@%s:443?type=tcp#%%E2%%9A%%A1%%20%%D0%%90%%D0%%B2%%D1%%82%%D0%%BE%%20%%C2%%B7%%20%d", 71+i, address, i+1)})
+		}
 		previewServers[0].Active = true
 		previewProvider := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			var uris []string
@@ -114,7 +120,7 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 			rw.Write([]byte(strings.Join(uris, "\n")))
 		}))
 		defer previewProvider.Close()
-		previewData, _ := json.Marshal(models.SubscriptionData{URL: previewProvider.URL, ActiveID: 0, Servers: previewServers})
+		previewData, _ := json.Marshal(models.SubscriptionData{URL: previewProvider.URL, Name: "Blank", SecondaryURL: "https://example.invalid/skip", SecondaryName: "SkipVPN", ActiveID: 0, Servers: previewServers})
 		os.WriteFile(filepath.Join(dir, "subscription.json"), previewData, 0600)
 		sub.Load()
 		cfg.OutboundsFile = filepath.Join(dir, "04_outbounds.json")

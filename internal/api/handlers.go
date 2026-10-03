@@ -50,10 +50,24 @@ func (h *Handlers) HandleGetSubscription(w http.ResponseWriter, r *http.Request)
 		"last_updated": data.LastUpdated,
 		"server_count": len(data.Servers),
 		"sources": []map[string]interface{}{
-			{"id": 0, "url": data.URL, "last_updated": data.LastUpdated, "server_count": counts[0]},
-			{"id": 1, "url": data.SecondaryURL, "last_updated": data.SecondaryLastUpdated, "server_count": counts[1]},
+			{"id": 0, "name": data.Name, "url": data.URL, "last_updated": data.LastUpdated, "server_count": counts[0]},
+			{"id": 1, "name": data.SecondaryName, "url": data.SecondaryURL, "last_updated": data.SecondaryLastUpdated, "server_count": counts[1]},
 		},
 	})
+}
+
+// HandleRenameSubscription — PUT /api/subscription/name
+func (h *Handlers) HandleRenameSubscription(w http.ResponseWriter, r *http.Request) {
+	var req models.RenameSubscriptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный формат запроса"})
+		return
+	}
+	if err := h.subscription.SetSourceName(req.Source, req.Name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // HandleUpdateSubscription — POST /api/subscription
@@ -171,7 +185,13 @@ func (h *Handlers) HandleSelectServer(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[SELECT] Запрос выбора сервера ID=%d", req.ID)
 	if h.config.VerifiedFailover.Enabled {
-		server, err := h.watchdog.SelectVerified(r.Context(), req.ID)
+		var server *models.Server
+		var err error
+		if req.GroupName != "" {
+			server, err = h.watchdog.SelectVerifiedGroup(r.Context(), req.Source, req.GroupName)
+		} else {
+			server, err = h.watchdog.SelectVerified(r.Context(), req.ID)
+		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
