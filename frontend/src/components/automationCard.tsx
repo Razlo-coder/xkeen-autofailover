@@ -142,6 +142,36 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                 </div>
                 <div className='space-y-2'>
                     <label
+                        htmlFor='source-priority'
+                        className='text-sm font-medium'
+                    >
+                        Приоритет подписок
+                    </label>
+                    <select
+                        id='source-priority'
+                        className={fieldClass}
+                        value={draft.source_priority || 'all'}
+                        onChange={event =>
+                            change({
+                                source_priority: event.target
+                                    .value as AutomationSettings['source_priority'],
+                            })
+                        }
+                    >
+                        <option value='all'>
+                            Общие приоритеты стран и серверов
+                        </option>
+                        <option value='first'>Сначала подписка 1</option>
+                        <option value='second'>Сначала подписка 2</option>
+                    </select>
+                    <p className='text-xs text-muted-foreground'>
+                        Если предпочитаемый сервис недоступен или слишком
+                        медленный, проверяется другой. Возврат к нему — только
+                        после успешной проверки.
+                    </p>
+                </div>
+                <div className='space-y-2'>
+                    <label
                         htmlFor='country-choice'
                         className='text-sm font-medium'
                     >

@@ -25,7 +25,9 @@ func (w *Watchdog) verifiedCandidates(current map[string]interface{}, higherThan
 		if higherThan != nil && !xkeen.PolicyBetter(server, *higherThan, w.config.VerifiedFailover) {
 			continue
 		}
-		if automatic && w.isBlacklisted(server.RawURI) {
+		// A periodic return must recheck a formerly blocked priority even if
+		// its temporary outage blacklist has not yet expired.
+		if automatic && higherThan == nil && w.isBlacklisted(server.RawURI) {
 			continue
 		}
 		outbound, err := xkeen.OutboundForServer(current, &server)

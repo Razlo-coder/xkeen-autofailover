@@ -557,7 +557,7 @@ func (w *Watchdog) selectBest() (*models.Server, error) {
 	}
 
 	// By RawURI, not index: a Refresh may have run between snapshot and activation
-	return w.subscription.SetActiveByRawURI(checked[best].RawURI)
+	return w.subscription.SetActiveByRawURI(checked[best].RawURI, checked[best].SourceID)
 }
 
 // AllowedActiveOrBest returns the server whose outbound to apply after an
@@ -774,8 +774,12 @@ func (w *Watchdog) GetStatus() models.Status {
 			fingerprint, err := xkeen.OutboundFingerprint(ob)
 			if err == nil && fingerprint == display.Fingerprint {
 				status.CurrentServer = display.Name
+				id := display.SourceID
+				status.CurrentSourceID = &id
 			} else if server := w.subscription.MatchConfiguredServer(ob); server != nil {
 				status.CurrentServer = server.Name
+				id := server.SourceID
+				status.CurrentSourceID = &id
 			}
 			if status.Connected {
 				now := time.Now()
@@ -791,6 +795,8 @@ func (w *Watchdog) GetStatus() models.Status {
 		}
 	} else if server := w.subscription.GetActiveServer(); server != nil {
 		status.CurrentServer = server.Name
+		id := server.SourceID
+		status.CurrentSourceID = &id
 		status.Protocol = server.Protocol
 	}
 

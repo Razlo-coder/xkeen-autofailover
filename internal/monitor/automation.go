@@ -15,6 +15,12 @@ import (
 var countryCode = regexp.MustCompile(`^[A-Z]{2}$`)
 
 func normalizeAutomation(s models.AutomationSettings) (models.AutomationSettings, error) {
+	if s.SourcePriority != "" && s.SourcePriority != "all" && s.SourcePriority != "first" && s.SourcePriority != "second" {
+		return s, fmt.Errorf("неизвестный приоритет подписок")
+	}
+	if s.SourcePriority == "" {
+		s.SourcePriority = "all"
+	}
 	if !models.ValidConnectionSettings(s.QualityThresholdMs, s.QualityFailCount, s.PriorityCheckSec) {
 		return s, fmt.Errorf("порог задержки: 100–60000 мс; плохих проверок: 1–10; интервал возврата: 60–86400 секунд")
 	}
@@ -68,7 +74,7 @@ func normalizeAutomation(s models.AutomationSettings) (models.AutomationSettings
 func (w *Watchdog) automationLocked() models.AutomationSettings {
 	p := w.config.VerifiedFailover
 	copyList := func(v []string) []string { return append([]string{}, v...) }
-	return models.AutomationSettings{Enabled: w.config.WatchdogAutoStart, CountryPriority: copyList(p.CountryPriority),
+	return models.AutomationSettings{Enabled: w.config.WatchdogAutoStart, SourcePriority: p.SourcePriority, CountryPriority: copyList(p.CountryPriority),
 		AllowOtherCountries: p.AllowOtherCountries, PreferredServerNames: copyList(p.PreferredServerNames),
 		ExcludedServerNames: copyList(p.ExcludedServerNames), ExcludeNameContains: copyList(p.ExcludeNameContains),
 		QualityEnabled: p.QualityEnabled, QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
@@ -79,6 +85,7 @@ func (w *Watchdog) applyAutomationLocked(s models.AutomationSettings) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.config.WatchdogAutoStart = s.Enabled
+	w.config.VerifiedFailover.SourcePriority = s.SourcePriority
 	w.config.VerifiedFailover.CountryPriority = s.CountryPriority
 	w.config.VerifiedFailover.AllowOtherCountries = s.AllowOtherCountries
 	w.config.VerifiedFailover.PreferredServerNames = s.PreferredServerNames

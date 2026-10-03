@@ -81,7 +81,7 @@ func (w *Watchdog) rememberVerifiedCurrent(ob map[string]interface{}) {
 		w.verifiedCurrentOB = nil
 		if haveSaved {
 			w.verifiedCurrent = &models.Server{Name: saved.Name, Protocol: saved.Protocol,
-				Country: saved.Country, CountryOverride: saved.CountryOverride}
+				Country: saved.Country, CountryOverride: saved.CountryOverride, SourceID: saved.SourceID}
 			w.verifiedCurrentOB = ob
 		}
 	}
@@ -188,6 +188,12 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 
 func (w *Watchdog) returnVerifiedPriority(ctx context.Context, current map[string]interface{}) {
 	p := w.config.VerifiedFailover
+	// A preferred source that has not been configured cannot supply a better
+	// candidate. Keep checking country/name preferences within the active one.
+	sources := w.subscription.GetData()
+	if (p.SourcePriority == "second" && sources.SecondaryURL == "") || (p.SourcePriority == "first" && sources.URL == "") {
+		p.SourcePriority = "all"
+	}
 	if !p.ReturnToPriority || w.verifiedCurrent == nil || !xkeen.PolicyHasHigherPriority(*w.verifiedCurrent, p) {
 		return
 	}
@@ -361,7 +367,7 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 func (w *Watchdog) commitVerifiedCandidate(server models.Server, candidate map[string]interface{}, result xkeen.ProbeResult) {
 	server.Latency = result.Latency
 	w.subscription.UpdateLatencies([]models.Server{server})
-	if _, err := w.subscription.SetActiveByRawURI(server.RawURI); err != nil {
+	if _, err := w.subscription.SetActiveByRawURI(server.RawURI, server.SourceID); err != nil {
 		w.writeLog("[VERIFY] Сервер применён, состояние подписки не сохранено: %v", err)
 	}
 	w.mu.Lock()
@@ -384,6 +390,10 @@ func (w *Watchdog) RefreshVerified(newURL string) ([]models.Server, error) {
 }
 
 func (w *Watchdog) RefreshVerifiedContext(ctx context.Context, newURL string) ([]models.Server, error) {
+	return w.RefreshVerifiedSourceContext(ctx, 0, newURL)
+}
+
+func (w *Watchdog) RefreshVerifiedSourceContext(ctx context.Context, source int, newURL string) ([]models.Server, error) {
 	ctx, finish, err := w.lockVerifiedOperation(ctx, true)
 	if err != nil {
 		return nil, err
@@ -394,8 +404,8 @@ func (w *Watchdog) RefreshVerifiedContext(ctx context.Context, newURL string) ([
 		w.rememberVerifiedCurrent(ob)
 	}
 	hadServers := len(w.subscription.GetServers()) > 0
-	if newURL != "" {
-		servers, err = w.subscription.UpdateURLContext(ctx, newURL)
+	if newURL != "" || source == 1 {
+		servers, err = w.subscription.UpdateSourceContext(ctx, source, newURL)
 	} else {
 		servers, err = w.subscription.RefreshContext(ctx)
 	}
@@ -459,7 +469,7 @@ func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, 
 	w.ClearBlacklist(chosen.RawURI)
 	chosen.Latency = result.Latency
 	w.subscription.UpdateLatencies([]models.Server{*chosen})
-	selected, err := w.subscription.SetActiveByRawURI(chosen.RawURI)
+	selected, err := w.subscription.SetActiveByRawURI(chosen.RawURI, chosen.SourceID)
 	w.rememberVerifiedCurrent(ob)
 	w.manualSlowChoice = result.OK && !w.acceptableQuality(result)
 	w.updateVerifiedIdentity(ob)

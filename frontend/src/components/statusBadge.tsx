@@ -58,9 +58,11 @@ export function StatusBadge({
                     <span
                         className={cn(
                             'text-xs',
-                            qualityDegraded
-                                ? 'text-amber-400'
-                                : 'text-muted-foreground',
+                            latency <= 300
+                                ? 'text-emerald-400'
+                                : latency < 500
+                                  ? 'text-amber-400'
+                                  : 'text-red-400',
                         )}
                     >
                         {latency} мс

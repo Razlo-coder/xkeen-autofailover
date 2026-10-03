@@ -1,5 +1,6 @@
 export type Server = {
     id: number
+    source_id: number
     name: string
     address: string
     port: number
@@ -15,6 +16,7 @@ export type Server = {
 
 export type AutomationSettings = {
     enabled: boolean
+    source_priority: 'all' | 'first' | 'second'
     country_priority: string[]
     allow_other_countries: boolean
     preferred_server_names: string[]
@@ -38,6 +40,7 @@ export type Status = {
     xray_running: boolean
     restarting: boolean
     current_server: string
+    current_source_id?: number
     protocol: string
     latency_ms: number
     uptime: string
@@ -94,6 +97,12 @@ export type SubscriptionInfo = {
     url: string
     last_updated: string
     server_count: number
+    sources: {
+        id: number
+        url: string
+        last_updated: string
+        server_count: number
+    }[]
 }
 
 export type AuthStatus = {

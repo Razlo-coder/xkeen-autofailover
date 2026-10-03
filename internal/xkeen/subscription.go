@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -117,6 +118,31 @@ func (sm *SubscriptionManager) UpdateURL(url string) ([]models.Server, error) {
 }
 
 func (sm *SubscriptionManager) UpdateURLContext(ctx context.Context, url string) ([]models.Server, error) {
+	return sm.UpdateSourceContext(ctx, 0, url)
+}
+
+// UpdateSourceContext replaces one subscription without discarding the other.
+// An empty secondary URL removes that source; the primary cannot be removed.
+func (sm *SubscriptionManager) UpdateSourceContext(ctx context.Context, source int, url string) ([]models.Server, error) {
+	if source < 0 || source > 1 {
+		return nil, fmt.Errorf("неизвестный номер подписки")
+	}
+	url = strings.TrimSpace(url)
+	if url == "" {
+		if source != 1 {
+			return nil, fmt.Errorf("URL основной подписки обязателен")
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		sm.mu.Lock()
+		sm.data.SecondaryURL = ""
+		sm.applyRefreshLocked(source, nil)
+		sm.data.SecondaryLastUpdated = time.Time{}
+		servers := append([]models.Server(nil), sm.data.Servers...)
+		sm.mu.Unlock()
+		return servers, sm.Save()
+	}
 	servers, err := sm.downloadAndParseContext(ctx, url)
 	if err != nil {
 		return nil, err
@@ -127,11 +153,16 @@ func (sm *SubscriptionManager) UpdateURLContext(ctx context.Context, url string)
 		sm.mu.Unlock()
 		return nil, err
 	}
-	sm.data.URL = url
-	sm.applyRefreshLocked(servers)
+	if source == 0 {
+		sm.data.URL = url
+	} else {
+		sm.data.SecondaryURL = url
+	}
+	sm.applyRefreshLocked(source, servers)
+	combined := append([]models.Server(nil), sm.data.Servers...)
 	sm.mu.Unlock()
 
-	return servers, sm.Save()
+	return combined, sm.Save()
 }
 
 // Refresh reloads the servers from the current URL.
@@ -141,47 +172,103 @@ func (sm *SubscriptionManager) Refresh() ([]models.Server, error) {
 
 func (sm *SubscriptionManager) RefreshContext(ctx context.Context) ([]models.Server, error) {
 	sm.mu.RLock()
-	url := sm.data.URL
+	urls := [2]string{sm.data.URL, sm.data.SecondaryURL}
 	sm.mu.RUnlock()
 
-	if url == "" {
+	if urls[0] == "" && urls[1] == "" {
 		return nil, fmt.Errorf("URL подписки не задан")
 	}
-
-	servers, err := sm.downloadAndParseContext(ctx, url)
-	if err != nil {
-		return nil, err
+	type download struct {
+		servers []models.Server
+		err     error
 	}
+	var results [2]download
+	var wg sync.WaitGroup
+	for source, url := range urls {
+		if url == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[source].servers, results[source].err = sm.downloadAndParseContext(ctx, url)
+		}()
+	}
+	wg.Wait()
 
 	sm.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		sm.mu.Unlock()
 		return nil, err
 	}
-	sm.applyRefreshLocked(servers)
+	succeeded := false
+	var failures []string
+	for source, url := range urls {
+		if url == "" || url != sm.sourceURLLocked(source) {
+			continue
+		}
+		if results[source].err != nil {
+			failures = append(failures, fmt.Sprintf("подписка %d: %v", source+1, results[source].err))
+			continue
+		}
+		sm.applyRefreshLocked(source, results[source].servers)
+		succeeded = true
+	}
+	servers := append([]models.Server(nil), sm.data.Servers...)
 	sm.mu.Unlock()
-
+	if !succeeded {
+		if len(failures) == 0 {
+			return nil, fmt.Errorf("подписки изменились во время обновления")
+		}
+		return nil, fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		log.Printf("[SUBSCRIPTION] Частичное обновление: %s; сохранённые серверы недоступной подписки оставлены", strings.Join(failures, "; "))
+	}
 	return servers, sm.Save()
 }
 
-// applyRefreshLocked swaps the server list, keeping the active server matched by
-// RawURI rather than index and carrying manual country overrides across. Call
-// with sm.mu held.
-func (sm *SubscriptionManager) applyRefreshLocked(servers []models.Server) {
-	var activeURI string
-	if sm.data.ActiveID >= 0 && sm.data.ActiveID < len(sm.data.Servers) {
-		activeURI = sm.data.Servers[sm.data.ActiveID].RawURI
+func (sm *SubscriptionManager) sourceURLLocked(source int) string {
+	if source == 1 {
+		return sm.data.SecondaryURL
 	}
+	return sm.data.URL
+}
 
-	carryOverrides(sm.data.Servers, servers)
-
-	sm.data.LastUpdated = time.Now()
-	sm.data.Servers = servers
+// applyRefreshLocked replaces only one source and keeps the active server and
+// country overrides tied to both source and URI. Call with sm.mu held.
+func (sm *SubscriptionManager) applyRefreshLocked(source int, servers []models.Server) {
+	var activeURI string
+	activeSource := 0
+	if sm.data.ActiveID >= 0 && sm.data.ActiveID < len(sm.data.Servers) {
+		active := sm.data.Servers[sm.data.ActiveID]
+		activeURI, activeSource = active.RawURI, active.SourceID
+	}
+	var oldSource, combined []models.Server
+	for _, old := range sm.data.Servers {
+		if old.SourceID == source {
+			oldSource = append(oldSource, old)
+		} else {
+			combined = append(combined, old)
+		}
+	}
+	carryOverrides(oldSource, servers)
+	for i := range servers {
+		servers[i].SourceID = source
+	}
+	if source == 0 {
+		combined = append(servers, combined...)
+		sm.data.LastUpdated = time.Now()
+	} else {
+		combined = append(combined, servers...)
+		sm.data.SecondaryLastUpdated = time.Now()
+	}
+	sm.data.Servers = combined
 
 	newActive := 0
 	if activeURI != "" {
-		for i := range servers {
-			if servers[i].RawURI == activeURI {
+		for i := range combined {
+			if combined[i].SourceID == activeSource && combined[i].RawURI == activeURI {
 				newActive = i
 				break
 			}
@@ -189,6 +276,7 @@ func (sm *SubscriptionManager) applyRefreshLocked(servers []models.Server) {
 	}
 	sm.data.ActiveID = newActive
 	for i := range sm.data.Servers {
+		sm.data.Servers[i].ID = i
 		sm.data.Servers[i].Active = i == newActive
 	}
 }
@@ -253,13 +341,13 @@ func (sm *SubscriptionManager) UpdateLatencies(checked []models.Server) {
 	byURI := make(map[string]int, len(checked))
 	for _, c := range checked {
 		if c.RawURI != "" {
-			byURI[c.RawURI] = c.Latency
+			byURI[fmt.Sprintf("%d:%s", c.SourceID, c.RawURI)] = c.Latency
 		}
 	}
 
 	now := time.Now()
 	for i := range sm.data.Servers {
-		if lat, ok := byURI[sm.data.Servers[i].RawURI]; ok {
+		if lat, ok := byURI[fmt.Sprintf("%d:%s", sm.data.Servers[i].SourceID, sm.data.Servers[i].RawURI)]; ok {
 			sm.data.Servers[i].Latency = lat
 			sm.data.Servers[i].LastChecked = now
 		}
@@ -332,13 +420,13 @@ func (sm *SubscriptionManager) SetActive(id int) (*models.Server, error) {
 // SetActiveByRawURI activates a server by its stable RawURI under a single lock.
 // Safer than SetActive(id) when a Refresh may have run between snapshot and
 // activation: indices move, RawURI does not.
-func (sm *SubscriptionManager) SetActiveByRawURI(uri string) (*models.Server, error) {
+func (sm *SubscriptionManager) SetActiveByRawURI(uri string, sourceID ...int) (*models.Server, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	idx := -1
 	for i := range sm.data.Servers {
-		if sm.data.Servers[i].RawURI == uri {
+		if sm.data.Servers[i].RawURI == uri && (len(sourceID) == 0 || sm.data.Servers[i].SourceID == sourceID[0]) {
 			idx = i
 			break
 		}

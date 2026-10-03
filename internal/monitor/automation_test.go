@@ -43,6 +43,7 @@ func TestAutomationPersistsAndKeepsRotatedNamePreferences(t *testing.T) {
 	w := verifiedWatchdog(t)
 	settings := w.GetAutomation()
 	settings.Enabled = true
+	settings.SourcePriority = "second"
 	settings.CountryPriority = []string{"de", "NL", "de"}
 	settings.AllowOtherCountries = true
 	settings.PreferredServerNames = []string{"Amsterdam Extra"}
@@ -66,6 +67,9 @@ func TestAutomationPersistsAndKeepsRotatedNamePreferences(t *testing.T) {
 	}
 	if !reflect.DeepEqual(original.CountryPriority, []string{"DE", "NL"}) {
 		t.Fatal("country normalization or de-duplication failed")
+	}
+	if original.SourcePriority != "second" {
+		t.Fatal("subscription preference was not persisted")
 	}
 	copy := w.GetAutomation()
 	copy.CountryPriority[0] = "RU"
@@ -92,6 +96,11 @@ func TestAutomationPersistsAndKeepsRotatedNamePreferences(t *testing.T) {
 func TestAutomationInvalidOrUnsavedRulesDoNotReplaceLiveRules(t *testing.T) {
 	w := verifiedWatchdog(t)
 	before := w.GetAutomation()
+	badPriority := before
+	badPriority.SourcePriority = "unknown"
+	if err := w.SaveAutomation(badPriority); err == nil {
+		t.Fatal("unknown subscription preference accepted")
+	}
 	if err := w.SaveAutomation(models.AutomationSettings{}); err == nil {
 		t.Fatal("empty strict allowlist accepted")
 	}

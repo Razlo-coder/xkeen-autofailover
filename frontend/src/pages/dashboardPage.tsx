@@ -70,8 +70,11 @@ export function DashboardPage() {
     })
 
     const updateSub = useMutation({
-        mutationFn: (url: string) =>
-            api.post<{ servers: Server[] }>('/api/subscription', { url }),
+        mutationFn: ({ source, url }: { source: number; url: string }) =>
+            api.post<{ servers: Server[] }>('/api/subscription', {
+                source,
+                url,
+            }),
         onMutate: cancelLatency,
         onSettled: () => {
             qc.invalidateQueries({ queryKey: ['subscription'] })
@@ -205,6 +208,9 @@ export function DashboardPage() {
                             />
                             {s?.current_server && (
                                 <span className='text-xs text-muted-foreground'>
+                                    {subscription.data?.sources?.[1]?.url &&
+                                        s.current_source_id !== undefined &&
+                                        `№${s.current_source_id + 1} · `}
                                     {s.current_server}
                                     {s.protocol && ` (${s.protocol})`}
                                 </span>
@@ -278,7 +284,9 @@ export function DashboardPage() {
                     <div className='space-y-4'>
                         <SubscriptionForm
                             subscription={subscription.data ?? null}
-                            onUpdate={url => updateSub.mutate(url)}
+                            onUpdate={(source, url) =>
+                                updateSub.mutate({ source, url })
+                            }
                             onRefresh={() => refreshSub.mutate()}
                             loading={
                                 updateSub.isPending || refreshSub.isPending

@@ -39,10 +39,20 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 // HandleGetSubscription — GET /api/subscription
 func (h *Handlers) HandleGetSubscription(w http.ResponseWriter, r *http.Request) {
 	data := h.subscription.GetData()
+	counts := [2]int{}
+	for _, server := range data.Servers {
+		if server.SourceID >= 0 && server.SourceID < len(counts) {
+			counts[server.SourceID]++
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"url":          data.URL,
 		"last_updated": data.LastUpdated,
 		"server_count": len(data.Servers),
+		"sources": []map[string]interface{}{
+			{"id": 0, "url": data.URL, "last_updated": data.LastUpdated, "server_count": counts[0]},
+			{"id": 1, "url": data.SecondaryURL, "last_updated": data.SecondaryLastUpdated, "server_count": counts[1]},
+		},
 	})
 }
 
@@ -54,7 +64,7 @@ func (h *Handlers) HandleUpdateSubscription(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.URL == "" {
+	if req.Source < 0 || req.Source > 1 || (req.Source == 0 && req.URL == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "URL обязателен"})
 		return
 	}
@@ -62,9 +72,9 @@ func (h *Handlers) HandleUpdateSubscription(w http.ResponseWriter, r *http.Reque
 	var servers []models.Server
 	var err error
 	if h.config.VerifiedFailover.Enabled {
-		servers, err = h.watchdog.RefreshVerifiedContext(r.Context(), req.URL)
+		servers, err = h.watchdog.RefreshVerifiedSourceContext(r.Context(), req.Source, req.URL)
 	} else {
-		servers, err = h.subscription.UpdateURL(req.URL)
+		servers, err = h.subscription.UpdateSourceContext(r.Context(), req.Source, req.URL)
 	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -91,7 +101,7 @@ func (h *Handlers) HandleRefreshSubscription(w http.ResponseWriter, r *http.Requ
 	if h.config.VerifiedFailover.Enabled {
 		servers, err = h.watchdog.RefreshVerifiedContext(r.Context(), "")
 	} else {
-		servers, err = h.subscription.Refresh()
+		servers, err = h.subscription.RefreshContext(r.Context())
 	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

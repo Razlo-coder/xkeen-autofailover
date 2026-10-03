@@ -132,7 +132,8 @@ func PolicyExclusion(s models.Server, policy models.VerifiedFailoverConfig) stri
 	return ""
 }
 
-// Countries are considered first, then preferred names within each country.
+// An optional source preference precedes country and server-name preferences.
+// Without it, countries are considered first, then names within each country.
 // Unlisted countries are only allowed when explicitly enabled. Equal ranks
 // retain subscription order. Endpoint changes do not reset name preferences.
 func PolicyCandidates(servers []models.Server, policy models.VerifiedFailoverConfig) []models.Server {
@@ -165,9 +166,13 @@ func policyRank(s models.Server, policy models.VerifiedFailoverConfig) (int, int
 	return country, name
 }
 
-// PolicyBetter compares explicit country/name preferences only. Subscription
+// PolicyBetter compares source, country, and name preferences. Subscription
 // order breaks selection ties, but never causes a healthy connection to rotate.
 func PolicyBetter(candidate, current models.Server, policy models.VerifiedFailoverConfig) bool {
+	cs, as := sourceRank(candidate, policy), sourceRank(current, policy)
+	if cs != as {
+		return cs < as
+	}
 	cc, cn := policyRank(candidate, policy)
 	ac, an := policyRank(current, policy)
 	return cc < ac || (cc == ac && cn < an)
@@ -176,6 +181,23 @@ func PolicyBetter(candidate, current models.Server, policy models.VerifiedFailov
 // A configured higher rank may reappear on the next subscription refresh even
 // when it is absent from the cached list.
 func PolicyHasHigherPriority(current models.Server, policy models.VerifiedFailoverConfig) bool {
+	if sourceRank(current, policy) > 0 {
+		return true
+	}
 	country, name := policyRank(current, policy)
 	return country > 0 || name > 0
+}
+
+func sourceRank(s models.Server, policy models.VerifiedFailoverConfig) int {
+	switch policy.SourcePriority {
+	case "first":
+		return s.SourceID
+	case "second":
+		if s.SourceID == 1 {
+			return 0
+		}
+		return 1
+	default:
+		return 0
+	}
 }

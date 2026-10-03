@@ -69,6 +69,7 @@ type Config struct {
 // CountryPriority is an allowlist as well as an ordered preference.
 type VerifiedFailoverConfig struct {
 	Enabled              bool     `yaml:"enabled"`
+	SourcePriority       string   `yaml:"source_priority"`
 	CountryPriority      []string `yaml:"country_priority"`
 	AllowOtherCountries  bool     `yaml:"allow_other_countries"`
 	PreferredServerNames []string `yaml:"preferred_server_names"`
@@ -86,7 +87,7 @@ type VerifiedFailoverConfig struct {
 
 // DefaultVerifiedFailover also supplies missing fields in older YAML installs.
 func DefaultVerifiedFailover() VerifiedFailoverConfig {
-	return VerifiedFailoverConfig{AllowOtherCountries: true, BypassMark: 255,
+	return VerifiedFailoverConfig{SourcePriority: "all", AllowOtherCountries: true, BypassMark: 255,
 		ProbeTimeoutSec: 8, RetryIntervalSec: 120, QualityEnabled: true,
 		QualityThresholdMs: 1500, QualityFailCount: 3, ReturnToPriority: true, PriorityCheckSec: 300}
 }
@@ -99,6 +100,7 @@ func ValidConnectionSettings(threshold, count, interval int) bool {
 // from installation paths and packet marks. Names survive endpoint rotation.
 type AutomationSettings struct {
 	Enabled              bool     `json:"enabled"`
+	SourcePriority       string   `json:"source_priority"`
 	CountryPriority      []string `json:"country_priority"`
 	AllowOtherCountries  bool     `json:"allow_other_countries"`
 	PreferredServerNames []string `json:"preferred_server_names"`
@@ -126,6 +128,7 @@ type User struct {
 // Server is one entry of the subscription.
 type Server struct {
 	ID                int       `json:"id"`
+	SourceID          int       `json:"source_id"`
 	Name              string    `json:"name"`
 	Address           string    `json:"address"`
 	Port              int       `json:"port"`
@@ -142,10 +145,12 @@ type Server struct {
 
 // SubscriptionData is the stored subscription (data/subscription.json).
 type SubscriptionData struct {
-	URL         string    `json:"url"`
-	LastUpdated time.Time `json:"last_updated"`
-	Servers     []Server  `json:"servers"`
-	ActiveID    int       `json:"active_id"`
+	URL                  string    `json:"url"`
+	LastUpdated          time.Time `json:"last_updated"`
+	SecondaryURL         string    `json:"secondary_url,omitempty"`
+	SecondaryLastUpdated time.Time `json:"secondary_last_updated,omitempty"`
+	Servers              []Server  `json:"servers"`
+	ActiveID             int       `json:"active_id"`
 }
 
 // Status is the connection status reported to the UI.
@@ -160,6 +165,7 @@ type Status struct {
 	XrayRunning         bool       `json:"xray_running"`
 	Restarting          bool       `json:"restarting"`
 	CurrentServer       string     `json:"current_server"`
+	CurrentSourceID     *int       `json:"current_source_id,omitempty"`
 	Protocol            string     `json:"protocol"`
 	Latency             int        `json:"latency_ms"`
 	Uptime              string     `json:"uptime"`
@@ -207,5 +213,6 @@ type SetCountryRequest struct {
 
 // UpdateSubscriptionRequest sets the subscription URL.
 type UpdateSubscriptionRequest struct {
-	URL string `json:"url"`
+	URL    string `json:"url"`
+	Source int    `json:"source"`
 }

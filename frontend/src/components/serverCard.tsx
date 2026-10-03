@@ -59,17 +59,21 @@ export function ServerCard({
 
     return (
         <Card
+            size='sm'
             className={cn(
                 'transition-colors',
                 server.active &&
                     'border-emerald-500/50 shadow-[0_0_12px_rgba(16,185,129,0.08)]',
             )}
         >
-            <CardContent className='flex items-start justify-between gap-3 py-3'>
+            <CardContent className='flex items-start justify-between gap-2'>
                 <div className='min-w-0 flex-1'>
-                    <div className='flex items-center gap-2 mb-1.5'>
+                    <div className='flex items-center gap-1 mb-1'>
                         {flag && <span className='shrink-0'>{flag}</span>}
-                        <span className='text-sm font-medium truncate'>
+                        <span
+                            className='text-sm font-medium truncate'
+                            title={server.name}
+                        >
                             {server.name}
                         </span>
                         {server.active && (
@@ -82,7 +86,13 @@ export function ServerCard({
                         </p>
                     )}
 
-                    <div className='flex flex-wrap items-center gap-1.5 text-xs'>
+                    <div className='flex flex-wrap items-center gap-1 text-xs'>
+                        <span
+                            className='text-muted-foreground'
+                            title={`Подписка ${server.source_id + 1}`}
+                        >
+                            №{server.source_id + 1}
+                        </span>
                         <Badge
                             variant='outline'
                             className={cn(
@@ -101,7 +111,7 @@ export function ServerCard({
                             <span
                                 className={cn(
                                     'font-mono',
-                                    server.latency_ms < 200
+                                    server.latency_ms <= 300
                                         ? 'text-emerald-400'
                                         : server.latency_ms < 500
                                           ? 'text-amber-400'
