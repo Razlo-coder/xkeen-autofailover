@@ -497,13 +497,33 @@ func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url 
 	if sm.client != nil {
 		client = sm.client
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, subscriptionDownloadError(err)
+	fetch := func(userAgent string) (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, subscriptionDownloadError(err)
+		}
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, subscriptionDownloadError(err)
+		}
+		return resp, nil
 	}
-	resp, err := client.Do(req)
+	resp, err := fetch("")
 	if err != nil {
-		return nil, subscriptionDownloadError(err)
+		return nil, err
+	}
+	// Some subscription endpoints return 446 to generic HTTP clients and
+	// provide share links to a recognised VPN client. Retry that response once
+	// without changing requests to providers that already work normally.
+	if resp.StatusCode == 446 {
+		resp.Body.Close()
+		resp, err = fetch("Hiddify")
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer resp.Body.Close()
 

@@ -285,7 +285,7 @@ export function DashboardPage() {
                         <SubscriptionForm
                             subscription={subscription.data ?? null}
                             onUpdate={(source, url) =>
-                                updateSub.mutate({ source, url })
+                                updateSub.mutateAsync({ source, url })
                             }
                             onRefresh={() => refreshSub.mutate()}
                             loading={

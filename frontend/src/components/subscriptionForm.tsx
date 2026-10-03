@@ -29,16 +29,20 @@ function SourceForm({
     loading,
 }: {
     source: Source
-    onUpdate: (source: number, url: string) => void
+    onUpdate: (source: number, url: string) => Promise<unknown>
     loading: boolean
 }) {
     const [url, setUrl] = useState('')
     const [expanded, setExpanded] = useState(false)
-    const submit = (event: React.FormEvent) => {
+    const submit = async (event: React.FormEvent) => {
         event.preventDefault()
         if (!url.trim()) return
-        onUpdate(source.id, url.trim())
-        setUrl('')
+        try {
+            await onUpdate(source.id, url.trim())
+            setUrl('')
+        } catch {
+            // The dashboard shows the server error; retain the URL for retry.
+        }
     }
     return (
         <div className='space-y-2 border-t pt-3 first:border-t-0 first:pt-0'>
@@ -100,7 +104,7 @@ function SourceForm({
                     variant='ghost'
                     size='sm'
                     disabled={loading}
-                    onClick={() => onUpdate(1, '')}
+                    onClick={() => void onUpdate(1, '').catch(() => {})}
                     className='text-muted-foreground'
                 >
                     Удалить вторую подписку
@@ -117,7 +121,7 @@ export function SubscriptionForm({
     loading,
 }: {
     subscription: SubscriptionInfo | null
-    onUpdate: (source: number, url: string) => void
+    onUpdate: (source: number, url: string) => Promise<unknown>
     onRefresh: () => void
     loading: boolean
 }) {
