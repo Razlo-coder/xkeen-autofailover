@@ -38,6 +38,7 @@ type Watchdog struct {
 	lastVerifiedSwitch      time.Time
 	verifiedCurrent         *models.Server
 	verifiedCurrentOB       map[string]interface{}
+	manualSlowChoice        bool             // protected by operationMu; tied to the current outbound
 	verifiedDisplay         verifiedIdentity // protected by mu; bound to an outbound fingerprint
 	verifiedPersisted       verifiedIdentity // protected by operationMu; only successful disk writes
 	qualityFailCount        int
@@ -54,6 +55,8 @@ type Watchdog struct {
 	lastLatency             int
 	connected               bool
 	startTime               time.Time
+	connection              connectionTracker
+	coreInstance            func(string) string // set once before background work
 	logs                    []string
 	logFile                 *os.File
 	logMu                   sync.Mutex
@@ -76,6 +79,7 @@ func NewWatchdog(cfg *models.Config, sub *xkeen.SubscriptionManager, det *xkeen.
 		detector:           det,
 		active:             false, // off by default, switched on from the UI
 		startTime:          time.Now(),
+		coreInstance:       xkeen.MainCoreInstance,
 		lastVerifiedSwitch: time.Now(),
 		lastLatency:        -1,
 		blacklist:          make(map[string]time.Time),
@@ -198,6 +202,9 @@ func (w *Watchdog) checkWithContext(ctx context.Context) {
 	resp.Body.Close()
 	latency := int(time.Since(start).Milliseconds())
 
+	if !w.connected {
+		w.startTime = time.Now()
+	}
 	w.connected = true
 	w.lastLatency = latency
 	w.failCount = 0
@@ -713,7 +720,6 @@ func (w *Watchdog) Log(format string, args ...interface{}) {
 // GetStatus returns the current status.
 func (w *Watchdog) GetStatus() models.Status {
 	w.mu.RLock()
-	defer w.mu.RUnlock()
 
 	rt := w.detector.Runtime()
 
@@ -746,7 +752,7 @@ func (w *Watchdog) GetStatus() models.Status {
 	}
 
 	// Uptime
-	if w.connected {
+	if w.connected && !status.VerifiedFailover {
 		uptime := time.Since(w.startTime)
 		hours := int(uptime.Hours())
 		minutes := int(uptime.Minutes()) % 60
@@ -756,18 +762,28 @@ func (w *Watchdog) GetStatus() models.Status {
 			status.Uptime = fmt.Sprintf("%dm", minutes)
 		}
 	}
+	display := w.verifiedDisplay
+	w.mu.RUnlock()
 
 	// A subscription refresh can remove the current IP or temporarily set a
 	// different active index. In verified mode use the actual configuration and
 	// its confirmed identity, rather than that index.
-	if w.config.VerifiedFailover.Enabled {
+	if status.VerifiedFailover {
 		if ob, err := xkeen.SingleProxy(w.config.OutboundsFile); err == nil {
 			status.Protocol, _ = ob["protocol"].(string)
 			fingerprint, err := xkeen.OutboundFingerprint(ob)
-			if err == nil && fingerprint == w.verifiedDisplay.Fingerprint {
-				status.CurrentServer = w.verifiedDisplay.Name
+			if err == nil && fingerprint == display.Fingerprint {
+				status.CurrentServer = display.Name
 			} else if server := w.subscription.MatchConfiguredServer(ob); server != nil {
 				status.CurrentServer = server.Name
+			}
+			if status.Connected {
+				now := time.Now()
+				status.ConnectedSince = w.currentConnectionSince(ob, now)
+				if status.ConnectedSince != nil {
+					status.UptimeSeconds = int64(now.Sub(*status.ConnectedSince).Seconds())
+					status.Uptime = formatUptime(status.UptimeSeconds)
+				}
 			}
 		}
 		if status.CurrentServer == "" {

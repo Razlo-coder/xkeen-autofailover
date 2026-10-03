@@ -41,6 +41,8 @@ export type Status = {
     protocol: string
     latency_ms: number
     uptime: string
+    connected_since?: string
+    uptime_seconds?: number
     last_check: string
     watchdog_active: boolean
     core: 'xray' | 'mihomo'

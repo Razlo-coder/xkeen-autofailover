@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // VerifiedApplier keeps a durable rollback journal until configuration
@@ -91,6 +92,17 @@ func (a *VerifiedApplier) ApplyChecked(ctx context.Context, outbound map[string]
 		return a.rollback(fmt.Errorf("конфигурация изменена во время переключения"), true)
 	}
 	result, err := a.Probe(ctx, actual)
+	if (err != nil || !result.OK) && a.Running() && ctx.Err() == nil {
+		// A core that has just restarted can briefly reject the first probe.
+		// Retry once before undoing an otherwise reachable manual choice.
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-timer.C:
+			result, err = a.Probe(ctx, actual)
+		case <-ctx.Done():
+		}
+		timer.Stop()
+	}
 	if err != nil || !result.OK || !a.Running() {
 		return a.rollback(fmt.Errorf("VPN не подтвердился после перезапуска"), true)
 	}

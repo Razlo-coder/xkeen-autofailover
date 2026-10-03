@@ -108,6 +108,32 @@ func mustConfig(t *testing.T, path string) map[string]interface{} {
 	return cfg
 }
 
+func TestVerifiedPostRestartProbeRetriesBeforeRollingBack(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "04_outbounds.json")
+	if err := os.WriteFile(path, []byte(verifiedFixture), 0600); err != nil {
+		t.Fatal(err)
+	}
+	candidate := verifiedCandidate(t, path)
+	probes, restarts := 0, 0
+	a := VerifiedApplier{Path: path, DataDir: dir,
+		Validate: func() error { return nil },
+		Restart:  func() error { restarts++; return nil },
+		Running:  func() bool { return true },
+		Probe: func(context.Context, map[string]interface{}) (ProbeResult, error) {
+			probes++
+			return ProbeResult{OK: probes == 2, Latency: 3000}, nil
+		},
+	}
+	if err := a.Apply(context.Background(), candidate); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := SingleProxy(path)
+	if err != nil || !SameOutbound(actual, candidate) || probes != 2 || restarts != 1 {
+		t.Fatalf("brief post-restart failure caused rollback: probes=%d restarts=%d err=%v", probes, restarts, err)
+	}
+}
+
 func TestVerifiedRecoverInterruptedSwitch(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "04_outbounds.json")

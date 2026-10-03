@@ -396,6 +396,7 @@ func (h *Handlers) HandleRestart(w http.ResponseWriter, r *http.Request) {
 	var output string
 	var err error
 	if h.config.VerifiedFailover.Enabled {
+		h.watchdog.MarkCoreStopped()
 		output, err = xkeen.RestartAndWait(rt.Dispatcher)
 	} else {
 		output, err = xkeen.Restart(rt.Dispatcher)

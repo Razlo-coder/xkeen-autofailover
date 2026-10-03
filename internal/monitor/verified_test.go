@@ -30,6 +30,7 @@ func verifiedWatchdog(t *testing.T) *Watchdog {
 	policy.ExcludeNameContains = []string{"Extra Whitelist2"}
 	cfg := &models.Config{DataDir: dir, OutboundsFile: path, MaxFails: 2, BlacklistTTLSec: 300, ProbeConcurrency: 1, VerifiedFailover: policy}
 	w := NewWatchdog(cfg, xkeen.NewSubscriptionManager(dir), xkeen.NewDetector(t.TempDir(), "", "", "", "", "", ""))
+	w.coreInstance = func(string) string { return "test-boot:100:200" }
 	w.active = true
 	w.verifiedApplier = &xkeen.VerifiedApplier{Path: path, DataDir: dir, Validate: func() error { return nil }, Restart: func() error { return nil }, Running: func() bool { return true }}
 	return w

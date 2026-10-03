@@ -150,21 +150,23 @@ type SubscriptionData struct {
 
 // Status is the connection status reported to the UI.
 type Status struct {
-	VerifiedFailover    bool      `json:"verified_failover"`
-	CountryPriority     []string  `json:"country_priority,omitempty"`
-	AllowOtherCountries bool      `json:"allow_other_countries"`
-	ExcludedNames       []string  `json:"excluded_names,omitempty"`
-	Connected           bool      `json:"connected"`
-	QualityDegraded     bool      `json:"quality_degraded"`
-	QualityThresholdMs  int       `json:"quality_threshold_ms"`
-	XrayRunning         bool      `json:"xray_running"`
-	Restarting          bool      `json:"restarting"`
-	CurrentServer       string    `json:"current_server"`
-	Protocol            string    `json:"protocol"`
-	Latency             int       `json:"latency_ms"`
-	Uptime              string    `json:"uptime"`
-	LastCheck           time.Time `json:"last_check"`
-	WatchdogActive      bool      `json:"watchdog_active"`
+	VerifiedFailover    bool       `json:"verified_failover"`
+	CountryPriority     []string   `json:"country_priority,omitempty"`
+	AllowOtherCountries bool       `json:"allow_other_countries"`
+	ExcludedNames       []string   `json:"excluded_names,omitempty"`
+	Connected           bool       `json:"connected"`
+	QualityDegraded     bool       `json:"quality_degraded"`
+	QualityThresholdMs  int        `json:"quality_threshold_ms"`
+	XrayRunning         bool       `json:"xray_running"`
+	Restarting          bool       `json:"restarting"`
+	CurrentServer       string     `json:"current_server"`
+	Protocol            string     `json:"protocol"`
+	Latency             int        `json:"latency_ms"`
+	Uptime              string     `json:"uptime"`
+	ConnectedSince      *time.Time `json:"connected_since,omitempty"`
+	UptimeSeconds       int64      `json:"uptime_seconds"`
+	LastCheck           time.Time  `json:"last_check"`
+	WatchdogActive      bool       `json:"watchdog_active"`
 
 	// XKeen runtime: proxy core (xray/mihomo), proxying mode (TProxy/Hybrid/…),
 	// version and layout generation.

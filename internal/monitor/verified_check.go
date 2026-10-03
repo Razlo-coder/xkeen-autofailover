@@ -82,6 +82,9 @@ func (w *Watchdog) MarkCoreStopped() {
 	w.failCount = 0
 	w.qualityFailCount = 0
 	w.mu.Unlock()
+	if w.config.VerifiedFailover.Enabled {
+		w.endConnection()
+	}
 	w.publishStatus()
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"xkeen-panel/internal/models"
@@ -62,6 +63,15 @@ func (w *Watchdog) PrepareVerified() error {
 // Never guess a country/name for a configuration that was not matched before.
 // All access is serialized by operationMu.
 func (w *Watchdog) rememberVerifiedCurrent(ob map[string]interface{}) {
+	var saved verifiedIdentity
+	var haveSaved bool
+	if w.verifiedCurrentOB == nil || !xkeen.SameOutbound(ob, w.verifiedCurrentOB) {
+		w.manualSlowChoice = false
+		saved, haveSaved = w.loadVerifiedIdentity(ob)
+		if haveSaved {
+			w.manualSlowChoice = saved.ManualSlowChoice
+		}
+	}
 	w.subscription.ReconcileActive(ob)
 	if server := w.subscription.GetActiveServer(); server != nil {
 		w.verifiedCurrent = server
@@ -69,9 +79,9 @@ func (w *Watchdog) rememberVerifiedCurrent(ob map[string]interface{}) {
 	} else if w.verifiedCurrentOB == nil || !xkeen.SameOutbound(ob, w.verifiedCurrentOB) {
 		w.verifiedCurrent = nil
 		w.verifiedCurrentOB = nil
-		if identity, ok := w.loadVerifiedIdentity(ob); ok {
-			w.verifiedCurrent = &models.Server{Name: identity.Name, Protocol: identity.Protocol,
-				Country: identity.Country, CountryOverride: identity.CountryOverride}
+		if haveSaved {
+			w.verifiedCurrent = &models.Server{Name: saved.Name, Protocol: saved.Protocol,
+				Country: saved.Country, CountryOverride: saved.CountryOverride}
 			w.verifiedCurrentOB = ob
 		}
 	}
@@ -113,7 +123,11 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 	if ok {
 		w.failCount = 0
 		if poor {
-			w.qualityFailCount++
+			if w.manualSlowChoice {
+				w.qualityFailCount = 0
+			} else {
+				w.qualityFailCount++
+			}
 		} else {
 			w.qualityFailCount = 0
 		}
@@ -125,6 +139,11 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 	fails := w.failCount
 	qualityFails := w.qualityFailCount
 	w.mu.Unlock()
+	if ok {
+		w.confirmConnection(ob, time.Now(), false)
+	} else {
+		w.endConnection()
+	}
 	w.publishStatus()
 	if ok && !poor {
 		w.writeLog("[VERIFY] VPN работает: HTTPS %d/%d, %d мс", result.Successes, result.Total, result.Latency)
@@ -132,6 +151,13 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 		return
 	}
 	if poor {
+		if w.manualSlowChoice {
+			// The owner deliberately accepted this latency. Do not undo that
+			// choice because of quality alone; keep testing for a healthy priority.
+			w.writeLog("[QUALITY] Задержка %d мс, ручной выбор сохранён", result.Latency)
+			w.returnVerifiedPriority(ctx, ob)
+			return
+		}
 		w.writeLog("[QUALITY] Задержка %d мс выше %d мс, проверка %d/%d", result.Latency, w.config.VerifiedFailover.QualityThresholdMs, qualityFails, w.config.VerifiedFailover.QualityFailCount)
 		if qualityFails < w.config.VerifiedFailover.QualityFailCount {
 			return
@@ -203,6 +229,27 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 		return err
 	}
 	candidates := w.verifiedCandidates(current, higherThan, true)
+	w.mu.RLock()
+	allowSlowFallback := higherThan == nil && !w.connected
+	w.mu.RUnlock()
+	type slowCandidate struct {
+		candidate verifiedCandidate
+		latency   int
+		order     int
+	}
+	var slow []slowCandidate
+	rememberSlow := func(candidate verifiedCandidate, latency, order int) {
+		if !allowSlowFallback || latency < 0 || latency > 7999 {
+			return
+		}
+		for _, item := range slow {
+			if item.candidate.server.RawURI == candidate.server.RawURI {
+				return
+			}
+		}
+		slow = append(slow, slowCandidate{candidate: candidate, latency: latency, order: order})
+	}
+	order := 0
 	for len(candidates) > 0 {
 		if ctx.Err() != nil || !w.IsActive() {
 			return fmt.Errorf("автопереключение отменено")
@@ -216,10 +263,14 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 				server.Latency = r.Latency
 			}
 			w.subscription.UpdateLatencies([]models.Server{server})
-			if probeErr != nil || !w.acceptableQuality(r) {
-				if probeErr == nil && r.OK {
+			if probeErr == nil && r.OK && !w.acceptableQuality(r) {
+				rememberSlow(candidates[i], r.Latency, order+i)
+				if r.Latency >= 0 {
 					w.writeLog("[QUALITY] %s слишком медленный: %d мс", server.Name, r.Latency)
 				}
+				return true
+			}
+			if probeErr != nil || !r.OK {
 				w.blacklistServer(server.RawURI)
 				return true
 			}
@@ -233,6 +284,7 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 			break
 		}
 		server, candidate := candidates[picked].server, candidates[picked].outbound
+		order += picked + 1
 		candidates = candidates[picked+1:]
 		if err := ctx.Err(); err != nil {
 			return err
@@ -243,6 +295,9 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 		if err := w.verifiedApplier.ApplyChecked(ctx, candidate, func(confirmed xkeen.ProbeResult) error {
 			result = confirmed
 			if !w.acceptableQuality(confirmed) {
+				if confirmed.OK {
+					rememberSlow(verifiedCandidate{server: server, outbound: candidate}, confirmed.Latency, order-1)
+				}
 				server.Latency = confirmed.Latency
 				w.subscription.UpdateLatencies([]models.Server{server})
 				return fmt.Errorf("задержка после перезапуска %d мс превышает допустимую", confirmed.Latency)
@@ -260,28 +315,66 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 			}
 			continue
 		}
-		server.Latency = result.Latency
-		w.subscription.UpdateLatencies([]models.Server{server})
-		if _, err := w.subscription.SetActiveByRawURI(server.RawURI); err != nil {
-			w.writeLog("[VERIFY] Сервер применён, состояние подписки не сохранено: %v", err)
-		}
-		w.mu.Lock()
-		w.failCount = 0
-		w.qualityFailCount = 0
-		w.connected = true
-		w.lastLatency = result.Latency
-		w.lastCheck = time.Now()
-		w.mu.Unlock()
-		w.lastVerifiedSwitch = time.Now()
-		w.rememberVerifiedCurrent(candidate)
+		w.commitVerifiedCandidate(server, candidate, result)
 		w.writeLog("[VERIFY] Переключено и подтверждено: %s", server.Name)
-		w.publishStatus()
 		return nil
+	}
+	if allowSlowFallback && len(slow) > 0 {
+		// Prefer the lowest measured delay, retaining policy order on ties.
+		sort.SliceStable(slow, func(i, j int) bool {
+			if slow[i].latency != slow[j].latency {
+				return slow[i].latency < slow[j].latency
+			}
+			return slow[i].order < slow[j].order
+		})
+		for _, item := range slow {
+			if ctx.Err() != nil || !w.IsActive() {
+				return fmt.Errorf("автопереключение отменено")
+			}
+			server, candidate := item.candidate.server, item.candidate.outbound
+			var confirmed xkeen.ProbeResult
+			if err := w.verifiedApplier.ApplyChecked(ctx, candidate, func(r xkeen.ProbeResult) error {
+				confirmed = r
+				if r.Latency < 0 || r.Latency > 7999 {
+					return fmt.Errorf("задержка после перезапуска превышает 7999 мс")
+				}
+				return nil
+			}); err != nil {
+				w.writeLog("[VERIFY] Медленный запасной %s не применён: %v", server.Name, err)
+				w.blacklistServer(server.RawURI)
+				if err := w.verifiedApplier.Recover(); err != nil {
+					return err
+				}
+				continue
+			}
+			w.commitVerifiedCandidate(server, candidate, confirmed)
+			w.writeLog("[VERIFY] Рабочих быстрых серверов нет; подключён медленный запасной %s: %d мс", server.Name, confirmed.Latency)
+			return nil
+		}
 	}
 	if higherThan != nil {
 		return fmt.Errorf("более приоритетных серверов с допустимым качеством нет; текущее соединение сохранено")
 	}
 	return fmt.Errorf("серверов с допустимым качеством по выбранным правилам нет; текущая конфигурация сохранена, попытка будет повторена")
+}
+
+func (w *Watchdog) commitVerifiedCandidate(server models.Server, candidate map[string]interface{}, result xkeen.ProbeResult) {
+	server.Latency = result.Latency
+	w.subscription.UpdateLatencies([]models.Server{server})
+	if _, err := w.subscription.SetActiveByRawURI(server.RawURI); err != nil {
+		w.writeLog("[VERIFY] Сервер применён, состояние подписки не сохранено: %v", err)
+	}
+	w.mu.Lock()
+	w.failCount = 0
+	w.qualityFailCount = 0
+	w.connected = true
+	w.lastLatency = result.Latency
+	w.lastCheck = time.Now()
+	w.mu.Unlock()
+	w.lastVerifiedSwitch = time.Now()
+	w.confirmConnection(candidate, w.lastVerifiedSwitch, true)
+	w.rememberVerifiedCurrent(candidate)
+	w.publishStatus()
 }
 
 // RefreshVerified refreshes metadata only, keeping a working active config.
@@ -368,7 +461,10 @@ func (w *Watchdog) SelectVerified(ctx context.Context, id int) (*models.Server, 
 	w.subscription.UpdateLatencies([]models.Server{*chosen})
 	selected, err := w.subscription.SetActiveByRawURI(chosen.RawURI)
 	w.rememberVerifiedCurrent(ob)
+	w.manualSlowChoice = result.OK && !w.acceptableQuality(result)
+	w.updateVerifiedIdentity(ob)
 	w.lastVerifiedSwitch = time.Now()
+	w.confirmConnection(ob, w.lastVerifiedSwitch, true)
 	w.mu.Lock()
 	w.failCount = 0
 	w.qualityFailCount = 0

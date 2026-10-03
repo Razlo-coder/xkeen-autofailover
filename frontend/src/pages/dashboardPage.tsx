@@ -4,6 +4,7 @@ import { useEventSource } from '@/hooks/useEventSource'
 import { useStreamLatency } from '@/hooks/useStreamLatency'
 import { api } from '@/lib/api'
 import { StatusBadge } from '@/components/statusBadge'
+import { ConnectionUptime } from '@/components/connectionUptime'
 import { SubscriptionForm } from '@/components/subscriptionForm'
 import { ServerList } from '@/components/serverList'
 import { Controls } from '@/components/controls'
@@ -189,13 +190,13 @@ export function DashboardPage() {
             )}
             {/* Шапка */}
             <header className='bg-card border-b sticky top-0 z-10'>
-                <div className='max-w-6xl mx-auto px-4 py-3 flex items-center justify-between'>
-                    <div>
+                <div className='max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3'>
+                    <div className='min-w-0'>
                         <h1 className='text-lg font-bold flex items-center gap-2'>
                             <img src='/favicon.svg' alt='' className='size-6' />
                             XKeen Panel
                         </h1>
-                        <div className='flex items-center gap-3 mt-0.5'>
+                        <div className='flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5'>
                             <StatusBadge
                                 connected={s?.connected ?? false}
                                 xrayRunning={s?.xray_running ?? false}
@@ -208,9 +209,20 @@ export function DashboardPage() {
                                     {s.protocol && ` (${s.protocol})`}
                                 </span>
                             )}
+                            <ConnectionUptime
+                                since={s?.connected_since}
+                                seconds={s?.uptime_seconds}
+                                connected={s?.connected ?? false}
+                                restarting={restarting}
+                            />
                         </div>
                     </div>
-                    <Button variant='outline' size='sm' onClick={logout}>
+                    <Button
+                        className='shrink-0'
+                        variant='outline'
+                        size='sm'
+                        onClick={logout}
+                    >
                         <IconLogout className='size-4' />
                         Выйти
                     </Button>

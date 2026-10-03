@@ -131,30 +131,46 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 		// checks. Real probe cancellation and application are tested in monitor.
 		var previewRunning atomic.Bool
 		previewRunning.Store(true)
+		var previewSince atomic.Pointer[time.Time]
+		started := time.Now().Add(-25*time.Hour - 18*time.Minute).UTC()
+		previewSince.Store(&started)
+		previewStatus := previewStatusProvider(func() models.Status {
+			// Only the name lookup uses real config matching; core and time are synthetic.
+			status := wd.GetStatus()
+			settings := wd.GetAutomation()
+			status.Connected = previewRunning.Load()
+			status.XrayRunning = status.Connected
+			status.Latency = 291
+			if status.Connected {
+				status.ConnectedSince = previewSince.Load()
+				status.UptimeSeconds = int64(time.Since(*status.ConnectedSince).Seconds())
+			} else {
+				status.Latency = -1
+				status.ConnectedSince = nil
+			}
+			status.QualityDegraded = settings.QualityEnabled && status.Latency > settings.QualityThresholdMs
+			return status
+		})
 		previewHandler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 			switch r.Method + " " + r.URL.Path {
+			case "GET /api/events":
+				sse.HandleEvents(bus, previewStatus).ServeHTTP(rw, r)
 			case "GET /api/status":
-				// Only the current-name lookup uses the real config; no router is contacted.
-				status := wd.GetStatus()
-				settings := wd.GetAutomation()
-				status.Connected = previewRunning.Load()
-				status.XrayRunning = previewRunning.Load()
-				status.Latency = 291
-				if !status.Connected {
-					status.Latency = -1
-				}
-				status.QualityDegraded = settings.QualityEnabled && status.Latency > settings.QualityThresholdMs
 				rw.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(rw).Encode(status)
+				json.NewEncoder(rw).Encode(previewStatus())
 			case "POST /api/xkeen/stop":
 				if err := wd.SetAutomationEnabled(false); err != nil {
 					t.Error(err)
 				}
 				previewRunning.Store(false)
+				bus.Publish(sse.Event{Type: "status", Data: previewStatus()})
 				t.Log("UI preview: stop accepted")
 				json.NewEncoder(rw).Encode(map[string]bool{"success": true})
 			case "POST /api/xkeen/start", "POST /api/xkeen/restart":
+				now := time.Now().UTC()
+				previewSince.Store(&now)
 				previewRunning.Store(true)
+				bus.Publish(sse.Event{Type: "status", Data: previewStatus()})
 				t.Log("UI preview: start/restart accepted")
 				json.NewEncoder(rw).Encode(map[string]bool{"success": true})
 			case "GET /api/servers/check":
@@ -204,6 +220,9 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 					return
 				}
 				t.Log("UI preview: selected server " + strconv.Itoa(s.ID))
+				now := time.Now().UTC()
+				previewSince.Store(&now)
+				bus.Publish(sse.Event{Type: "status", Data: previewStatus()})
 				rw.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(rw).Encode(map[string]interface{}{"server": s})
 			default:
@@ -217,3 +236,7 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 		}
 	}
 }
+
+type previewStatusProvider func() models.Status
+
+func (p previewStatusProvider) GetStatus() models.Status { return p() }

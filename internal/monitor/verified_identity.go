@@ -12,11 +12,12 @@ import (
 // Persist only display/policy metadata and a digest of the connection. Endpoint,
 // credentials and the subscription URI are not copied into this file.
 type verifiedIdentity struct {
-	Fingerprint     string `json:"fingerprint"`
-	Name            string `json:"name"`
-	Protocol        string `json:"protocol"`
-	Country         string `json:"country,omitempty"`
-	CountryOverride string `json:"country_override,omitempty"`
+	Fingerprint      string `json:"fingerprint"`
+	Name             string `json:"name"`
+	Protocol         string `json:"protocol"`
+	Country          string `json:"country,omitempty"`
+	CountryOverride  string `json:"country_override,omitempty"`
+	ManualSlowChoice bool   `json:"manual_slow_choice,omitempty"`
 }
 
 func (w *Watchdog) verifiedIdentityPath() string {
@@ -52,7 +53,7 @@ func (w *Watchdog) updateVerifiedIdentity(ob map[string]interface{}) {
 	if s := w.verifiedCurrent; s != nil {
 		if fingerprint, err := xkeen.OutboundFingerprint(ob); err == nil {
 			identity = verifiedIdentity{Fingerprint: fingerprint, Name: s.Name, Protocol: s.Protocol,
-				Country: s.Country, CountryOverride: s.CountryOverride}
+				Country: s.Country, CountryOverride: s.CountryOverride, ManualSlowChoice: w.manualSlowChoice}
 		}
 	}
 	w.mu.Lock()

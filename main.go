@@ -146,6 +146,9 @@ func main() {
 
 	// Publish restart events over SSE
 	xkeen.OnRestartStateChange = func(restarting bool) {
+		if restarting && cfg.VerifiedFailover.Enabled {
+			watchdog.MarkCoreStopped()
+		}
 		eventBus.Publish(sse.Event{
 			Type: "restart",
 			Data: map[string]bool{"restarting": restarting},
