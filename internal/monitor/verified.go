@@ -475,7 +475,7 @@ func (w *Watchdog) SelectVerifiedGroup(ctx context.Context, source int, group st
 	}
 	var members []verifiedCandidate
 	for _, candidate := range w.verifiedCandidates(current, nil, false) {
-		if candidate.server.SourceID == source && xkeen.AutoGroupName(candidate.server.Name) == group {
+		if candidate.server.SourceID == source && xkeen.NumberedGroupName(candidate.server.Name) == group {
 			members = append(members, candidate)
 		}
 	}

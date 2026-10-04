@@ -39,6 +39,13 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 // HandleGetSubscription — GET /api/subscription
 func (h *Handlers) HandleGetSubscription(w http.ResponseWriter, r *http.Request) {
 	data := h.subscription.GetData()
+	firstName, secondName := data.Name, data.SecondaryName
+	if firstName == "" {
+		firstName = data.DetectedName
+	}
+	if secondName == "" {
+		secondName = data.SecondaryDetectedName
+	}
 	counts := [2]int{}
 	for _, server := range data.Servers {
 		if server.SourceID >= 0 && server.SourceID < len(counts) {
@@ -50,8 +57,8 @@ func (h *Handlers) HandleGetSubscription(w http.ResponseWriter, r *http.Request)
 		"last_updated": data.LastUpdated,
 		"server_count": len(data.Servers),
 		"sources": []map[string]interface{}{
-			{"id": 0, "name": data.Name, "url": data.URL, "last_updated": data.LastUpdated, "server_count": counts[0]},
-			{"id": 1, "name": data.SecondaryName, "url": data.SecondaryURL, "last_updated": data.SecondaryLastUpdated, "server_count": counts[1]},
+			{"id": 0, "name": firstName, "detected_name": data.DetectedName, "custom_name": data.Name, "url": data.URL, "last_updated": data.LastUpdated, "server_count": counts[0]},
+			{"id": 1, "name": secondName, "detected_name": data.SecondaryDetectedName, "custom_name": data.SecondaryName, "url": data.SecondaryURL, "last_updated": data.SecondaryLastUpdated, "server_count": counts[1]},
 		},
 	})
 }

@@ -13,19 +13,31 @@ import (
 	"xkeen-panel/internal/models"
 )
 
-var numberedAutoName = regexp.MustCompile(`(?i)^\s*(?:⚡\s*)?(авто|auto)(\+?)\s*[·•]\s*[0-9]+\s*$`)
+var numberedGroupName = regexp.MustCompile(`^\s*(.+?)\s*[·•]\s*[1-9][0-9]*\s*$`)
+var autoGroupName = regexp.MustCompile(`(?i)^\s*(?:⚡\s*)?(авто|auto)(\+?)\s*$`)
 
-// AutoGroupName recognises numbered members of one logical Auto profile.
-// Keep Auto and Auto+ separate; other numbered server names are unaffected.
-func AutoGroupName(name string) string {
-	parts := numberedAutoName.FindStringSubmatch(name)
+// NumberedGroupName recognises flattened members of a logical Happ profile.
+// The distinctive " · N" / " • N" suffix is added to member names by the
+// subscription exporter. Auto and Auto+ remain separate, as do country+ groups.
+func NumberedGroupName(name string) string {
+	parts := numberedGroupName.FindStringSubmatch(name)
 	if len(parts) == 0 {
 		return ""
 	}
-	if strings.EqualFold(parts[1], "auto") {
-		return "⚡ Auto" + parts[2]
+	base := strings.TrimSpace(parts[1])
+	if base == "" {
+		return ""
 	}
-	return "⚡ Авто" + parts[2]
+	if auto := autoGroupName.FindStringSubmatch(base); len(auto) != 0 {
+		if strings.EqualFold(auto[1], "auto") {
+			return "⚡ Auto" + auto[2]
+		}
+		return "⚡ Авто" + auto[2]
+	}
+	if strings.HasSuffix(base, " +") {
+		base = strings.TrimSpace(strings.TrimSuffix(base, " +")) + "+"
+	}
+	return base
 }
 
 // ParseSubscription parses subscription content, base64 or plain text.
@@ -66,7 +78,7 @@ func ParseSubscription(content string) ([]models.Server, error) {
 		}
 
 		server.ID = len(servers)
-		server.GroupName = AutoGroupName(server.Name)
+		server.GroupName = NumberedGroupName(server.Name)
 		server.RawURI = line
 		server.Country = detectCountry(server.Name)
 		servers = append(servers, *server)

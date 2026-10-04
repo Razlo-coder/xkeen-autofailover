@@ -8,6 +8,8 @@ import type { SubscriptionInfo } from '@/types'
 type Source = {
     id: number
     name: string
+    detected_name: string
+    custom_name: string
     url: string
     last_updated: string
     server_count: number
@@ -76,6 +78,25 @@ function SourceForm({
                     Назвать
                 </Button>
             </div>
+            {source.detected_name && (
+                <div className='flex items-center justify-between gap-2 text-xs text-muted-foreground'>
+                    <span className='truncate' title={source.detected_name}>
+                        Из подписки: {source.detected_name}
+                    </span>
+                    {source.custom_name && (
+                        <button
+                            type='button'
+                            className='shrink-0 text-primary hover:underline'
+                            disabled={loading}
+                            onClick={() =>
+                                void onRename(source.id, '').catch(() => {})
+                            }
+                        >
+                            Использовать это имя
+                        </button>
+                    )}
+                </div>
+            )}
             {source.url ? (
                 <div className='space-y-1 text-xs'>
                     <button
@@ -155,11 +176,21 @@ export function SubscriptionForm({
         {
             id: 0,
             name: '',
+            detected_name: '',
+            custom_name: '',
             url: subscription?.url ?? '',
             last_updated: subscription?.last_updated ?? '',
             server_count: subscription?.server_count ?? 0,
         },
-        { id: 1, name: '', url: '', last_updated: '', server_count: 0 },
+        {
+            id: 1,
+            name: '',
+            detected_name: '',
+            custom_name: '',
+            url: '',
+            last_updated: '',
+            server_count: 0,
+        },
     ]
     return (
         <Card>

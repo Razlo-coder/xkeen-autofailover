@@ -17,6 +17,7 @@ func TestSubscriptionAPIAddsAndRemovesSecondSource(t *testing.T) {
 	}))
 	defer primary.Close()
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Profile-Title", "SkipVPN из подписки")
 		_, _ = w.Write([]byte("vless://00000000-0000-4000-8000-000000000002@192.0.2.2:443?type=tcp#Reserve"))
 	}))
 	defer provider.Close()
@@ -35,6 +36,11 @@ func TestSubscriptionAPIAddsAndRemovesSecondSource(t *testing.T) {
 	if result := post(`{"source":1,"url":"` + provider.URL + `"}`); result.Code != http.StatusOK {
 		t.Fatalf("add second: %d %s", result.Code, result.Body)
 	}
+	autoGet := httptest.NewRecorder()
+	h.HandleGetSubscription(autoGet, httptest.NewRequest(http.MethodGet, "/api/subscription", nil))
+	if !bytes.Contains(autoGet.Body.Bytes(), []byte(`"name":"SkipVPN из подписки"`)) || !bytes.Contains(autoGet.Body.Bytes(), []byte(`"custom_name":""`)) {
+		t.Fatalf("provider title not shown before manual rename: %s", autoGet.Body)
+	}
 	rename := httptest.NewRecorder()
 	h.HandleRenameSubscription(rename, httptest.NewRequest(http.MethodPut, "/api/subscription/name", bytes.NewBufferString(`{"source":1,"name":"SkipVPN"}`)))
 	if rename.Code != http.StatusOK {
@@ -52,6 +58,21 @@ func TestSubscriptionAPIAddsAndRemovesSecondSource(t *testing.T) {
 	}
 	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil || len(response.Sources) != 2 || response.Sources[0].URL != primary.URL || response.Sources[0].ServerCount != 1 || response.Sources[1].URL != provider.URL || response.Sources[1].ServerCount != 1 || response.Sources[1].Name != "SkipVPN" {
 		t.Fatalf("second source metadata incorrect: %s (%v)", get.Body, err)
+	}
+	reset := httptest.NewRecorder()
+	h.HandleRenameSubscription(reset, httptest.NewRequest(http.MethodPut, "/api/subscription/name", bytes.NewBufferString(`{"source":1,"name":""}`)))
+	if reset.Code != http.StatusOK {
+		t.Fatalf("clear manual name: %s", reset.Body)
+	}
+	resetGet := httptest.NewRecorder()
+	h.HandleGetSubscription(resetGet, httptest.NewRequest(http.MethodGet, "/api/subscription", nil))
+	if !bytes.Contains(resetGet.Body.Bytes(), []byte(`"name":"SkipVPN из подписки"`)) {
+		t.Fatalf("detected title did not return after clear: %s", resetGet.Body)
+	}
+	rename = httptest.NewRecorder()
+	h.HandleRenameSubscription(rename, httptest.NewRequest(http.MethodPut, "/api/subscription/name", bytes.NewBufferString(`{"source":1,"name":"SkipVPN"}`)))
+	if rename.Code != http.StatusOK {
+		t.Fatalf("restore manual name: %s", rename.Body)
 	}
 	reloaded := xkeen.NewSubscriptionManager(dir)
 	if err := reloaded.Load(); err != nil || reloaded.GetData().SecondaryName != "SkipVPN" {

@@ -174,6 +174,8 @@ export function ServerList({
         : [...new Set(servers.map(server => server.source_id))].map(id => ({
               id,
               name: '',
+              detected_name: '',
+              custom_name: '',
               url: '',
               last_updated: '',
               server_count: servers.filter(server => server.source_id === id)

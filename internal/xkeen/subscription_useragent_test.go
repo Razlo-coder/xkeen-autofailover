@@ -26,6 +26,7 @@ func TestSubscriptionRetries446WithVPNClientUserAgent(t *testing.T) {
 			return
 		}
 		compatibleRequests.Add(1)
+		w.Header().Set("Profile-Title", "SkipVPN")
 		_, _ = w.Write([]byte(uriB))
 	}))
 	defer secondary.Close()
@@ -40,6 +41,9 @@ func TestSubscriptionRetries446WithVPNClientUserAgent(t *testing.T) {
 	}
 	if len(servers) != 2 || servers[1].SourceID != 1 || primaryRequests.Load() != 1 || genericRequests.Load() != 1 || compatibleRequests.Load() != 1 {
 		t.Fatalf("incorrect retry or merged list: servers=%+v requests=%d/%d/%d", servers, primaryRequests.Load(), genericRequests.Load(), compatibleRequests.Load())
+	}
+	if sm.GetData().SecondaryDetectedName != "SkipVPN" {
+		t.Fatal("profile title from successful 446 retry was not saved")
 	}
 	if _, err := sm.Refresh(); err != nil {
 		t.Fatal(err)

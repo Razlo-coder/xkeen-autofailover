@@ -44,12 +44,12 @@ func (w *Watchdog) verifiedCandidates(current map[string]interface{}, higherThan
 	// fails, try siblings before falling back to the global subscription policy.
 	// Periodic return-to-priority uses higherThan and keeps the global order.
 	if automatic && higherThan == nil && w.verifiedCurrent != nil {
-		group := xkeen.AutoGroupName(w.verifiedCurrent.Name)
+		group := xkeen.NumberedGroupName(w.verifiedCurrent.Name)
 		source := w.verifiedCurrent.SourceID
 		if group != "" {
 			sort.SliceStable(candidates, func(i, j int) bool {
 				inGroup := func(candidate verifiedCandidate) bool {
-					return candidate.server.SourceID == source && xkeen.AutoGroupName(candidate.server.Name) == group
+					return candidate.server.SourceID == source && xkeen.NumberedGroupName(candidate.server.Name) == group
 				}
 				return inGroup(candidates[i]) && !inGroup(candidates[j])
 			})

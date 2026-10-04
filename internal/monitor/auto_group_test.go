@@ -2,8 +2,10 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -91,5 +93,36 @@ func TestAutoGroupFailoverTriesSiblingBeforeOtherPriority(t *testing.T) {
 	}
 	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.2" {
 		t.Fatal("automatic failover left the Auto group while a sibling still worked")
+	}
+}
+
+func TestCountryPlusGroupSelectsFastestNode(t *testing.T) {
+	w := verifiedWatchdog(t)
+	w.config.VerifiedFailover.AllowOtherCountries = true
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		var links []string
+		for i := 0; i < 5; i++ {
+			name := fmt.Sprintf("🇫🇮 Финляндия+ · %d", i+1)
+			links = append(links, fmt.Sprintf("vless://00000000-0000-4000-8000-%012d@192.0.2.%d:443?type=tcp#%s", i+2, i+2, url.PathEscape(name)))
+		}
+		_, _ = writer.Write([]byte(strings.Join(links, "\n")))
+	}))
+	defer provider.Close()
+	if _, err := w.subscription.UpdateSourceContext(context.Background(), 1, provider.URL); err != nil {
+		t.Fatal(err)
+	}
+	w.verifiedProbe = func(_ context.Context, outbound map[string]interface{}) (xkeen.ProbeResult, error) {
+		if addressOf(outbound) == "192.0.2.4" {
+			return xkeen.ProbeResult{OK: true, Latency: 70}, nil
+		}
+		return xkeen.ProbeResult{OK: true, Latency: 250}, nil
+	}
+	w.verifiedApplier.Probe = w.verifiedProbe
+	selected, err := w.SelectVerifiedGroup(context.Background(), 1, "🇫🇮 Финляндия+")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.GroupName != "🇫🇮 Финляндия+" || addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.4" {
+		t.Fatalf("Finnish group did not select fastest node: %+v", selected)
 	}
 }

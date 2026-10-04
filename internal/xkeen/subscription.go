@@ -139,13 +139,15 @@ func (sm *SubscriptionManager) UpdateSourceContext(ctx context.Context, source i
 		}
 		sm.mu.Lock()
 		sm.data.SecondaryURL = ""
+		sm.data.SecondaryName = ""
+		sm.data.SecondaryDetectedName = ""
 		sm.applyRefreshLocked(source, nil)
 		sm.data.SecondaryLastUpdated = time.Time{}
 		servers := append([]models.Server(nil), sm.data.Servers...)
 		sm.mu.Unlock()
 		return servers, sm.Save()
 	}
-	servers, err := sm.downloadAndParseContext(ctx, url)
+	fetched, err := sm.downloadAndParseContext(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -157,10 +159,12 @@ func (sm *SubscriptionManager) UpdateSourceContext(ctx context.Context, source i
 	}
 	if source == 0 {
 		sm.data.URL = url
+		sm.data.DetectedName = fetched.title
 	} else {
 		sm.data.SecondaryURL = url
+		sm.data.SecondaryDetectedName = fetched.title
 	}
-	sm.applyRefreshLocked(source, servers)
+	sm.applyRefreshLocked(source, fetched.servers)
 	combined := append([]models.Server(nil), sm.data.Servers...)
 	sm.mu.Unlock()
 
@@ -182,6 +186,7 @@ func (sm *SubscriptionManager) RefreshContext(ctx context.Context) ([]models.Ser
 	}
 	type download struct {
 		servers []models.Server
+		title   string
 		err     error
 	}
 	var results [2]download
@@ -193,7 +198,8 @@ func (sm *SubscriptionManager) RefreshContext(ctx context.Context) ([]models.Ser
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[source].servers, results[source].err = sm.downloadAndParseContext(ctx, url)
+			fetched, err := sm.downloadAndParseContext(ctx, url)
+			results[source] = download{servers: fetched.servers, title: fetched.title, err: err}
 		}()
 	}
 	wg.Wait()
@@ -214,6 +220,11 @@ func (sm *SubscriptionManager) RefreshContext(ctx context.Context) ([]models.Ser
 			continue
 		}
 		sm.applyRefreshLocked(source, results[source].servers)
+		if source == 0 {
+			sm.data.DetectedName = results[source].title
+		} else {
+			sm.data.SecondaryDetectedName = results[source].title
+		}
 		succeeded = true
 	}
 	servers := append([]models.Server(nil), sm.data.Servers...)
@@ -349,7 +360,7 @@ func (sm *SubscriptionManager) GetServers() []models.Server {
 	result := make([]models.Server, len(sm.data.Servers))
 	copy(result, sm.data.Servers)
 	for i := range result {
-		result[i].GroupName = AutoGroupName(result[i].Name)
+		result[i].GroupName = NumberedGroupName(result[i].Name)
 	}
 	return result
 }
@@ -510,11 +521,12 @@ func (sm *SubscriptionManager) SelectNext() (*models.Server, error) {
 	return sm.SetActive(next)
 }
 
-func (sm *SubscriptionManager) downloadAndParse(url string) ([]models.Server, error) {
-	return sm.downloadAndParseContext(context.Background(), url)
+type downloadedSubscription struct {
+	servers []models.Server
+	title   string
 }
 
-func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url string) ([]models.Server, error) {
+func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url string) (downloadedSubscription, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	if sm.client != nil {
 		client = sm.client
@@ -535,7 +547,7 @@ func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url 
 	}
 	resp, err := fetch("")
 	if err != nil {
-		return nil, err
+		return downloadedSubscription{}, err
 	}
 	// Some subscription endpoints return 446 to generic HTTP clients and
 	// provide share links to a recognised VPN client. Retry that response once
@@ -544,25 +556,29 @@ func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url 
 		resp.Body.Close()
 		resp, err = fetch("Hiddify")
 		if err != nil {
-			return nil, err
+			return downloadedSubscription{}, err
 		}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("сервер вернул код %d", resp.StatusCode)
+		return downloadedSubscription{}, fmt.Errorf("сервер вернул код %d", resp.StatusCode)
 	}
 
 	const maxBody = 4 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
+		return downloadedSubscription{}, fmt.Errorf("ошибка чтения ответа: %w", err)
 	}
 	if len(body) > maxBody {
-		return nil, fmt.Errorf("подписка превышает 4 МБ")
+		return downloadedSubscription{}, fmt.Errorf("подписка превышает 4 МБ")
 	}
 
-	return ParseSubscription(string(body))
+	servers, err := ParseSubscription(string(body))
+	if err != nil {
+		return downloadedSubscription{}, err
+	}
+	return downloadedSubscription{servers: servers, title: subscriptionProfileTitle(resp.Header.Get("Profile-Title"), body)}, nil
 }
 
 func subscriptionDownloadError(err error) error {

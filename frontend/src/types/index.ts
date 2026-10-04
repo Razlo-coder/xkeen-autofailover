@@ -101,6 +101,8 @@ export type SubscriptionInfo = {
     sources: {
         id: number
         name: string
+        detected_name: string
+        custom_name: string
         url: string
         last_updated: string
         server_count: number

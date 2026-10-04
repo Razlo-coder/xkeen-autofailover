@@ -102,7 +102,7 @@ func PolicyExclusion(s models.Server, policy models.VerifiedFailoverConfig) stri
 	if s.Protocol != "" && !SupportedProxyProtocol(s.Protocol) {
 		return "Протокол не поддерживается автоматическим переключением"
 	}
-	group := AutoGroupName(s.Name)
+	group := NumberedGroupName(s.Name)
 	for _, name := range policy.ExcludedServerNames {
 		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(s.Name)) ||
 			(group != "" && strings.EqualFold(strings.TrimSpace(name), group)) {
@@ -159,7 +159,7 @@ func policyRank(s models.Server, policy models.VerifiedFailoverConfig) (int, int
 			break
 		}
 	}
-	group := AutoGroupName(s.Name)
+	group := NumberedGroupName(s.Name)
 	for i, preferred := range policy.PreferredServerNames {
 		if strings.EqualFold(strings.TrimSpace(preferred), strings.TrimSpace(s.Name)) ||
 			(group != "" && strings.EqualFold(strings.TrimSpace(preferred), group)) {

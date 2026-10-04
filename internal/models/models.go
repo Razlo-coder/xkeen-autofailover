@@ -146,14 +146,16 @@ type Server struct {
 
 // SubscriptionData is the stored subscription (data/subscription.json).
 type SubscriptionData struct {
-	URL                  string    `json:"url"`
-	Name                 string    `json:"name,omitempty"`
-	LastUpdated          time.Time `json:"last_updated"`
-	SecondaryURL         string    `json:"secondary_url,omitempty"`
-	SecondaryName        string    `json:"secondary_name,omitempty"`
-	SecondaryLastUpdated time.Time `json:"secondary_last_updated,omitempty"`
-	Servers              []Server  `json:"servers"`
-	ActiveID             int       `json:"active_id"`
+	URL                   string    `json:"url"`
+	Name                  string    `json:"name,omitempty"`
+	DetectedName          string    `json:"detected_name,omitempty"`
+	LastUpdated           time.Time `json:"last_updated"`
+	SecondaryURL          string    `json:"secondary_url,omitempty"`
+	SecondaryName         string    `json:"secondary_name,omitempty"`
+	SecondaryDetectedName string    `json:"secondary_detected_name,omitempty"`
+	SecondaryLastUpdated  time.Time `json:"secondary_last_updated,omitempty"`
+	Servers               []Server  `json:"servers"`
+	ActiveID              int       `json:"active_id"`
 }
 
 // Status is the connection status reported to the UI.
