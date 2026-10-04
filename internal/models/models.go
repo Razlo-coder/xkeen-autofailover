@@ -117,7 +117,6 @@ type AutomationSettings struct {
 type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"password_hash"`
-	TOTPSecret   string    `json:"totp_secret"`
 	JWTSecret    string    `json:"jwt_secret"`
 	CreatedAt    time.Time `json:"created_at"`
 
@@ -193,16 +192,10 @@ type SetupRequest struct {
 	Password string `json:"password"`
 }
 
-// SetupConfirmRequest confirms the TOTP enrolment.
-type SetupConfirmRequest struct {
-	Code string `json:"code"`
-}
-
 // LoginRequest is a login attempt.
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	TOTPCode string `json:"totp_code"`
 }
 
 // SelectServerRequest selects a server.

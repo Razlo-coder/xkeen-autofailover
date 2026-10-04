@@ -99,11 +99,8 @@ func TestRateLimitMiddleware(t *testing.T) {
 func newConfirmedUserManager(t *testing.T) *auth.UserManager {
 	t.Helper()
 	um := auth.NewUserManager(t.TempDir())
-	if err := um.CreatePendingUser("bob", "password123", "SECRET"); err != nil {
-		t.Fatalf("CreatePendingUser: %v", err)
-	}
-	if err := um.ConfirmSetup(); err != nil {
-		t.Fatalf("ConfirmSetup: %v", err)
+	if err := um.CreateUser("bob", "password123"); err != nil {
+		t.Fatalf("CreateUser: %v", err)
 	}
 	return um
 }

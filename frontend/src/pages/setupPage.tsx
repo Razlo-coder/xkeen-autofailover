@@ -10,32 +10,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { TOTPSetup } from '@/components/totpSetup'
 import { setToken, api } from '@/lib/api'
-import type { SetupResponse } from '@/types'
+import type { TokenResponse } from '@/types'
 
 export function SetupPage() {
-    const [step, setStep] = useState<'credentials' | 'totp'>('credentials')
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
     const [confirmPassword, setConfirmPassword] = useState('')
-    const [totpData, setTotpData] = useState<SetupResponse | null>(null)
     const [error, setError] = useState('')
 
     const setupMutation = useMutation({
         mutationFn: () =>
-            api.post<SetupResponse>('/api/auth/setup', { username, password }),
-        onSuccess: data => {
-            setTotpData(data)
-            setStep('totp')
-            setError('')
-        },
-        onError: (err: Error) => setError(err.message),
-    })
-
-    const confirmMutation = useMutation({
-        mutationFn: (code: string) =>
-            api.post<{ token: string }>('/api/auth/setup/confirm', { code }),
+            api.post<TokenResponse>('/api/auth/setup', { username, password }),
         onSuccess: data => {
             setToken(data.token)
             window.location.href = '/'
@@ -72,81 +58,62 @@ export function SetupPage() {
                             </div>
                         )}
 
-                        {step === 'credentials' && (
-                            <form
-                                onSubmit={handleCredentials}
-                                className='space-y-4'
-                                autoComplete='on'
+                        <form
+                            onSubmit={handleCredentials}
+                            className='space-y-4'
+                            autoComplete='on'
+                        >
+                            <div className='space-y-2'>
+                                <Label htmlFor='setup-username'>Логин</Label>
+                                <Input
+                                    id='setup-username'
+                                    name='username'
+                                    autoComplete='username'
+                                    value={username}
+                                    onChange={e => setUsername(e.target.value)}
+                                    required
+                                    autoFocus
+                                />
+                            </div>
+                            <div className='space-y-2'>
+                                <Label htmlFor='setup-password'>Пароль</Label>
+                                <Input
+                                    id='setup-password'
+                                    name='password'
+                                    type='password'
+                                    autoComplete='new-password'
+                                    value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                    required
+                                    minLength={8}
+                                />
+                            </div>
+                            <div className='space-y-2'>
+                                <Label htmlFor='setup-confirm'>
+                                    Подтверждение пароля
+                                </Label>
+                                <Input
+                                    id='setup-confirm'
+                                    name='password_confirm'
+                                    type='password'
+                                    autoComplete='new-password'
+                                    value={confirmPassword}
+                                    onChange={e =>
+                                        setConfirmPassword(e.target.value)
+                                    }
+                                    required
+                                />
+                            </div>
+                            <Button
+                                type='submit'
+                                disabled={setupMutation.isPending}
+                                className='w-full'
                             >
-                                <div className='space-y-2'>
-                                    <Label htmlFor='setup-username'>
-                                        Логин
-                                    </Label>
-                                    <Input
-                                        id='setup-username'
-                                        name='username'
-                                        autoComplete='username'
-                                        value={username}
-                                        onChange={e =>
-                                            setUsername(e.target.value)
-                                        }
-                                        required
-                                        autoFocus
-                                    />
-                                </div>
-                                <div className='space-y-2'>
-                                    <Label htmlFor='setup-password'>
-                                        Пароль
-                                    </Label>
-                                    <Input
-                                        id='setup-password'
-                                        name='password'
-                                        type='password'
-                                        autoComplete='new-password'
-                                        value={password}
-                                        onChange={e =>
-                                            setPassword(e.target.value)
-                                        }
-                                        required
-                                        minLength={8}
-                                    />
-                                </div>
-                                <div className='space-y-2'>
-                                    <Label htmlFor='setup-confirm'>
-                                        Подтверждение пароля
-                                    </Label>
-                                    <Input
-                                        id='setup-confirm'
-                                        name='password_confirm'
-                                        type='password'
-                                        autoComplete='new-password'
-                                        value={confirmPassword}
-                                        onChange={e =>
-                                            setConfirmPassword(e.target.value)
-                                        }
-                                        required
-                                    />
-                                </div>
-                                <Button
-                                    type='submit'
-                                    disabled={setupMutation.isPending}
-                                    className='w-full'
-                                >
-                                    {setupMutation.isPending
-                                        ? 'Создание...'
-                                        : 'Далее'}
-                                </Button>
-                            </form>
-                        )}
-
-                        {step === 'totp' && totpData && (
-                            <TOTPSetup
-                                qrCode={totpData.totp_qr}
-                                secret={totpData.totp_secret}
-                                onConfirm={code => confirmMutation.mutate(code)}
-                                loading={confirmMutation.isPending}
-                            />
-                        )}
+                                {setupMutation.isPending
+                                    ? 'Создание...'
+                                    : 'Создать учётную запись'}
+                            </Button>
+                        </form>
                     </CardContent>
                 </Card>
             </div>

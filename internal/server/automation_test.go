@@ -20,8 +20,6 @@ import (
 	"xkeen-panel/internal/monitor"
 	"xkeen-panel/internal/sse"
 	"xkeen-panel/internal/xkeen"
-
-	"github.com/pquerna/otp/totp"
 )
 
 func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
@@ -30,11 +28,7 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 	policy.Enabled = true
 	cfg := &models.Config{DataDir: dir, WatchdogAutoStart: false, VerifiedFailover: policy}
 	um := auth.NewUserManager(dir)
-	const demoSecret = "JBSWY3DPEHPK3PXP"
-	if err := um.CreatePendingUser("preview", "preview-only-password", demoSecret); err != nil {
-		t.Fatal(err)
-	}
-	if err := um.ConfirmSetup(); err != nil {
+	if err := um.CreateUser("preview", "preview-only-password"); err != nil {
 		t.Fatal(err)
 	}
 	sub := xkeen.NewSubscriptionManager(dir)
@@ -138,8 +132,7 @@ func TestAutomationAPIAuthPersistenceAndInvalidRules(t *testing.T) {
 		if err := xkeen.WriteOutboundsConfig(cfg.OutboundsFile, map[string]interface{}{"outbounds": []interface{}{previewOutbound}}); err != nil {
 			t.Fatal(err)
 		}
-		otp, _ := totp.GenerateCode(demoSecret, time.Now())
-		t.Logf("UI preview at http://127.0.0.1:18080; username=preview password=preview-only-password TOTP=%s", otp)
+		t.Logf("UI preview at http://127.0.0.1:18080; username=preview password=preview-only-password")
 		// Synthetic slow ping/selection endpoints are used only for browser UI
 		// checks. Real probe cancellation and application are tested in monitor.
 		var previewRunning atomic.Bool

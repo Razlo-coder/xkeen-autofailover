@@ -114,11 +114,6 @@ export type AuthStatus = {
     passkey_enabled?: boolean
 }
 
-export type SetupResponse = {
-    totp_secret: string
-    totp_qr: string
-}
-
 export type TokenResponse = {
     token: string
 }

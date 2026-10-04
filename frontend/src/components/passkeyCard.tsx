@@ -47,7 +47,7 @@ export function PasskeyCard() {
             </CardHeader>
             <CardContent className='space-y-3'>
                 <p className='text-xs text-muted-foreground'>
-                    Вход по Face ID / отпечатку, без пароля и TOTP.
+                    Вход по Face ID / отпечатку без ввода пароля.
                 </p>
 
                 {error && (

@@ -20,11 +20,10 @@ export function LoginPage() {
     const { login, loginWithPasskey } = useAuth()
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
-    const [totpCode, setTotpCode] = useState('')
     const [error, setError] = useState('')
 
     const loginMutation = useMutation({
-        mutationFn: () => login(username, password, totpCode),
+        mutationFn: () => login(username, password),
         onError: (err: Error) => setError(err.message),
     })
 
@@ -116,33 +115,9 @@ export function LoginPage() {
                                     required
                                 />
                             </div>
-                            <div className='space-y-2'>
-                                <Label htmlFor='login-totp'>TOTP-код</Label>
-                                <Input
-                                    id='login-totp'
-                                    name='totp'
-                                    type='text'
-                                    inputMode='numeric'
-                                    autoComplete='one-time-code'
-                                    pattern='[0-9]*'
-                                    maxLength={6}
-                                    value={totpCode}
-                                    onChange={e =>
-                                        setTotpCode(
-                                            e.target.value.replace(/\D/g, ''),
-                                        )
-                                    }
-                                    placeholder='000000'
-                                    required
-                                    className='text-center text-xl tracking-[0.3em] placeholder:tracking-[0.3em]'
-                                />
-                            </div>
                             <Button
                                 type='submit'
-                                disabled={
-                                    loginMutation.isPending ||
-                                    totpCode.length !== 6
-                                }
+                                disabled={loginMutation.isPending}
                                 className='w-full'
                             >
                                 {loginMutation.isPending ? 'Вход...' : 'Войти'}

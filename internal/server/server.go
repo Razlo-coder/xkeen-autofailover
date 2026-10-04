@@ -66,7 +66,6 @@ func (s *Server) Handler() http.Handler {
 		r.Route("/auth", func(r chi.Router) {
 			r.Get("/status", authHandler.HandleAuthStatus)
 			r.Post("/setup", authHandler.HandleSetup)
-			r.Post("/setup/confirm", authHandler.HandleSetupConfirm)
 			r.With(api.RateLimitMiddleware(rateLimiter, s.config.TrustProxyHeaders)).Post("/login", authHandler.HandleLogin)
 			r.With(api.RateLimitMiddleware(rateLimiter, s.config.TrustProxyHeaders)).Post("/login/passkey/begin", webAuthnHandler.HandleLoginBegin)
 			r.With(api.RateLimitMiddleware(rateLimiter, s.config.TrustProxyHeaders)).Post("/login/passkey/finish", webAuthnHandler.HandleLoginFinish)

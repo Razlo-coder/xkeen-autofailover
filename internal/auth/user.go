@@ -17,8 +17,6 @@ type UserManager struct {
 	dataDir string
 	user    *models.User
 	mu      sync.RWMutex
-	// Holds the setup data until TOTP is confirmed
-	pendingSetup *models.User
 }
 
 func NewUserManager(dataDir string) *UserManager {
@@ -46,6 +44,23 @@ func (um *UserManager) Load() error {
 	if err := json.Unmarshal(data, &user); err != nil {
 		return err
 	}
+	// Older installations stored a TOTP secret in user.json. The account,
+	// password hash, JWT key and passkeys stay intact while the unused secret
+	// is removed from disk on the first start after upgrading.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, legacyTOTP := fields["totp_secret"]; legacyTOTP {
+		delete(fields, "totp_secret")
+		cleaned, err := json.MarshalIndent(fields, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := um.writeUserFile(cleaned); err != nil {
+			return err
+		}
+	}
 	um.user = &user
 	return nil
 }
@@ -57,10 +72,13 @@ func (um *UserManager) SetupRequired() bool {
 	return um.user == nil
 }
 
-// CreatePendingUser builds the account in memory, before TOTP is confirmed.
-func (um *UserManager) CreatePendingUser(username, password, totpSecret string) error {
+// CreateUser persists the first account. An existing account cannot be replaced.
+func (um *UserManager) CreateUser(username, password string) error {
 	um.mu.Lock()
 	defer um.mu.Unlock()
+	if um.user != nil {
+		return os.ErrExist
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -72,58 +90,21 @@ func (um *UserManager) CreatePendingUser(username, password, totpSecret string) 
 		return err
 	}
 
-	um.pendingSetup = &models.User{
+	user := &models.User{
 		Username:     username,
 		PasswordHash: string(hash),
-		TOTPSecret:   totpSecret,
 		JWTSecret:    jwtSecret,
 		CreatedAt:    time.Now(),
 	}
-	return nil
-}
-
-// ConfirmSetup persists the pending account.
-func (um *UserManager) ConfirmSetup() error {
-	um.mu.Lock()
-	defer um.mu.Unlock()
-
-	if um.pendingSetup == nil {
-		return os.ErrNotExist
-	}
-
-	if err := os.MkdirAll(um.dataDir, 0700); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(um.pendingSetup, "", "  ")
+	data, err := json.MarshalIndent(user, "", "  ")
 	if err != nil {
 		return err
 	}
-
-	if err := os.WriteFile(um.userFilePath(), data, 0600); err != nil {
+	if err := um.writeUserFile(data); err != nil {
 		return err
 	}
-
-	um.user = um.pendingSetup
-	um.pendingSetup = nil
+	um.user = user
 	return nil
-}
-
-// GetPendingTOTPSecret returns the TOTP secret of the pending setup.
-func (um *UserManager) GetPendingTOTPSecret() string {
-	um.mu.RLock()
-	defer um.mu.RUnlock()
-	if um.pendingSetup == nil {
-		return ""
-	}
-	return um.pendingSetup.TOTPSecret
-}
-
-// HasPendingSetup reports whether setup was started but not finished.
-func (um *UserManager) HasPendingSetup() bool {
-	um.mu.RLock()
-	defer um.mu.RUnlock()
-	return um.pendingSetup != nil
 }
 
 // CheckPassword verifies the account password.
@@ -153,14 +134,38 @@ func (um *UserManager) persistLocked() error {
 	if um.user == nil {
 		return os.ErrNotExist
 	}
-	if err := os.MkdirAll(um.dataDir, 0700); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(um.user, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(um.userFilePath(), data, 0600)
+	return um.writeUserFile(data)
+}
+
+func (um *UserManager) writeUserFile(data []byte) error {
+	if err := os.MkdirAll(um.dataDir, 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(um.dataDir, ".user-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), um.userFilePath())
 }
 
 func generateRandomKey(length int) (string, error) {

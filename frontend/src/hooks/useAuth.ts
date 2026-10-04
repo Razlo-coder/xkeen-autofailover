@@ -7,11 +7,10 @@ export const useAuth = () => {
     const navigate = useNavigate()
 
     const login = useCallback(
-        async (username: string, password: string, totpCode: string) => {
+        async (username: string, password: string) => {
             const data = await api.post<{ token: string }>('/api/auth/login', {
                 username,
                 password,
-                totp_code: totpCode,
             })
             setToken(data.token)
             navigate('/')
