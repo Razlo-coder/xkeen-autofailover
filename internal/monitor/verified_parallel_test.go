@@ -82,25 +82,22 @@ func TestParallelPingIsBoundedAndCoreActionCancelsAllWorkers(t *testing.T) {
 	}
 }
 
-func TestParallelFailoverKeepsPriorityAndReapsOtherProbesBeforeApply(t *testing.T) {
+func TestParallelFailoverUsesFirstFastPriorityAndReapsOtherProbesBeforeApply(t *testing.T) {
 	w := verifiedWatchdog(t)
 	importVerified(t, w)
 	w.config.ProbeConcurrency = 8
-	lowerReady := make(chan struct{})
+	higherStarted := make(chan struct{})
 	var active atomic.Int32
 	w.verifiedProbe = func(ctx context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
 		active.Add(1)
 		defer active.Add(-1)
 		if addressOf(ob) == "192.0.2.3" {
-			close(lowerReady)
+			<-higherStarted
 			return xkeen.ProbeResult{OK: true, Latency: 10}, nil
 		}
-		select {
-		case <-lowerReady:
-			return xkeen.ProbeResult{OK: true, Latency: 50}, nil
-		case <-ctx.Done():
-			return xkeen.ProbeResult{}, ctx.Err()
-		}
+		close(higherStarted)
+		<-ctx.Done()
+		return xkeen.ProbeResult{}, ctx.Err()
 	}
 	w.verifiedApplier.Validate = func() error {
 		if active.Load() != 0 {
@@ -109,16 +106,185 @@ func TestParallelFailoverKeepsPriorityAndReapsOtherProbesBeforeApply(t *testing.
 		return nil
 	}
 	w.verifiedApplier.Probe = func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error) {
-		return xkeen.ProbeResult{OK: true, Latency: 50}, nil
+		return xkeen.ProbeResult{OK: true, Latency: 10}, nil
 	}
 	if err := w.failoverVerified(context.Background(), mustSingle(t, w.config.OutboundsFile)); err != nil {
 		t.Fatal(err)
 	}
-	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.2" {
-		t.Fatal("faster lower-priority Germany displaced Netherlands")
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("fast Germany was not chosen while Netherlands was still probing")
 	}
 	if active.Load() != 0 {
 		t.Fatal("candidate worker leaked")
+	}
+}
+
+func TestOutageSwitchesToFastSamePriorityWithoutWaitingForWholeScan(t *testing.T) {
+	w := verifiedWatchdog(t)
+	w.config.ProbeConcurrency = 8
+	content := "vless://00000000-0000-4000-8000-000000000002@192.0.2.2:443?type=tcp#Netherlands%20Slow\n" +
+		"vless://00000000-0000-4000-8000-000000000003@192.0.2.3:443?type=tcp#Netherlands%20Fast\n" +
+		"vless://00000000-0000-4000-8000-000000000004@192.0.2.4:443?type=tcp#Germany"
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { _, _ = rw.Write([]byte(content)) }))
+	if _, err := w.subscription.UpdateURL(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	firstStarted := make(chan struct{})
+	firstCancelled := make(chan struct{})
+	lowerCancelled := make(chan struct{})
+	var active atomic.Int32
+	w.verifiedProbe = func(ctx context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		active.Add(1)
+		defer active.Add(-1)
+		switch addressOf(ob) {
+		case "192.0.2.2":
+			close(firstStarted)
+			<-ctx.Done()
+			close(firstCancelled)
+			return xkeen.ProbeResult{}, ctx.Err()
+		case "192.0.2.3":
+			<-firstStarted
+			return xkeen.ProbeResult{OK: true, Latency: 400}, nil
+		default:
+			<-ctx.Done()
+			close(lowerCancelled)
+			return xkeen.ProbeResult{}, ctx.Err()
+		}
+	}
+	w.verifiedApplier.Validate = func() error {
+		if active.Load() != 0 {
+			t.Error("config applied before other probes were cancelled")
+		}
+		return nil
+	}
+	w.verifiedApplier.Probe = func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error) {
+		return xkeen.ProbeResult{OK: true, Latency: 400}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := w.failoverVerified(ctx, mustSingle(t, w.config.OutboundsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("fast Netherlands did not win over an earlier hanging peer")
+	}
+	select {
+	case <-firstCancelled:
+	default:
+		t.Fatal("hanging probe was not cancelled before applying the server")
+	}
+	select {
+	case <-lowerCancelled:
+	default:
+		t.Fatal("lower-priority probe was not cancelled before applying the server")
+	}
+}
+
+func TestFirstOfflineCheckStartsFastRecovery(t *testing.T) {
+	w := verifiedWatchdog(t)
+	importVerified(t, w)
+	w.config.MaxFails = 3
+	w.verifiedProbe = func(_ context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		if addressOf(ob) == "192.0.2.1" {
+			return xkeen.ProbeResult{OK: false, Latency: -1}, nil
+		}
+		return xkeen.ProbeResult{OK: true, Latency: 200}, nil
+	}
+	w.verifiedApplier.Probe = w.verifiedProbe
+	w.checkVerified(context.Background())
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.2" {
+		t.Fatal("first offline check did not connect the fast preferred server")
+	}
+	if w.failCount != 0 || !w.GetStatus().Connected {
+		t.Fatal("successful fast recovery did not restore online status")
+	}
+}
+
+func TestFirstOfflineCheckDoesNotAcceptSlowFallback(t *testing.T) {
+	w := verifiedWatchdog(t)
+	importVerified(t, w)
+	w.config.MaxFails = 3
+	w.verifiedProbe = func(_ context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		if addressOf(ob) == "192.0.2.3" {
+			return xkeen.ProbeResult{OK: true, Latency: 3000}, nil
+		}
+		return xkeen.ProbeResult{OK: false, Latency: -1}, nil
+	}
+	w.verifiedApplier.Probe = w.verifiedProbe
+	w.checkVerified(context.Background())
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.1" {
+		t.Fatal("slow fallback was applied after only one failed check")
+	}
+	w.checkVerified(context.Background())
+	w.checkVerified(context.Background())
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("slow fallback was not applied after the configured failure count")
+	}
+}
+
+func TestOutageUsesNextPreferredCountryBeforeUnprioritizedScanEnds(t *testing.T) {
+	w := verifiedWatchdog(t)
+	w.config.ProbeConcurrency = 8
+	w.config.VerifiedFailover.AllowOtherCountries = true
+	content := "vless://00000000-0000-4000-8000-000000000002@192.0.2.2:443?type=tcp#Netherlands\n" +
+		"vless://00000000-0000-4000-8000-000000000003@192.0.2.3:443?type=tcp#Germany\n" +
+		"vless://00000000-0000-4000-8000-000000000004@192.0.2.4:443?type=tcp#France"
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { _, _ = rw.Write([]byte(content)) }))
+	if _, err := w.subscription.UpdateURL(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	netherlandsStarted := make(chan struct{})
+	netherlandsCancelled := make(chan struct{})
+	franceStarted := make(chan struct{})
+	franceCancelled := make(chan struct{})
+	w.verifiedProbe = func(ctx context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		switch addressOf(ob) {
+		case "192.0.2.2":
+			close(netherlandsStarted)
+			<-ctx.Done()
+			close(netherlandsCancelled)
+			return xkeen.ProbeResult{}, ctx.Err()
+		case "192.0.2.3":
+			<-netherlandsStarted
+			<-franceStarted
+			return xkeen.ProbeResult{OK: true, Latency: 200}, nil
+		default:
+			close(franceStarted)
+			<-ctx.Done()
+			close(franceCancelled)
+			return xkeen.ProbeResult{}, ctx.Err()
+		}
+	}
+	w.verifiedApplier.Validate = func() error {
+		select {
+		case <-netherlandsCancelled:
+		default:
+			t.Error("Germany was applied before Netherlands probe was cancelled")
+		}
+		select {
+		case <-franceCancelled:
+		default:
+			t.Error("Germany was applied before France probe was cancelled")
+		}
+		return nil
+	}
+	w.verifiedApplier.Probe = func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error) {
+		return xkeen.ProbeResult{OK: true, Latency: 200}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := w.failoverVerified(ctx, mustSingle(t, w.config.OutboundsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("fast Germany was not selected while Netherlands was still probing")
+	}
+	select {
+	case <-franceCancelled:
+	default:
+		t.Fatal("lower-priority scan was not cancelled")
 	}
 }
 

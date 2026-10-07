@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 
 	"xkeen-panel/internal/models"
@@ -12,6 +13,7 @@ import (
 type verifiedCandidate struct {
 	server   models.Server
 	outbound map[string]interface{}
+	order    int
 }
 
 type verifiedResult struct {
@@ -55,12 +57,42 @@ func (w *Watchdog) verifiedCandidates(current map[string]interface{}, higherThan
 			})
 		}
 	}
+	for i := range candidates {
+		candidates[i].order = i
+	}
 	return candidates
 }
 
+// A fast outage recovery must still follow an explicitly configured source,
+// country or server-name preference. With no preferences, every allowed node
+// is eligible for the early switch.
+func fastRecoveryPriority(s models.Server, policy models.VerifiedFailoverConfig) bool {
+	hasSource := policy.SourcePriority == "first" || policy.SourcePriority == "second"
+	if !hasSource && len(policy.CountryPriority) == 0 && len(policy.PreferredServerNames) == 0 {
+		return true
+	}
+	if (policy.SourcePriority == "first" && s.SourceID == 0) ||
+		(policy.SourcePriority == "second" && s.SourceID == 1) {
+		return true
+	}
+	for _, country := range policy.CountryPriority {
+		if strings.EqualFold(strings.TrimSpace(country), xkeen.PolicyCountry(s)) {
+			return true
+		}
+	}
+	group := xkeen.NumberedGroupName(s.Name)
+	for _, name := range policy.PreferredServerNames {
+		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(s.Name)) ||
+			(group != "" && strings.EqualFold(strings.TrimSpace(name), group)) {
+			return true
+		}
+	}
+	return false
+}
+
 // A bounded worker pool probes connections only; the caller alone applies a
-// config. Automatic selection consumes results in policy order, while the UI
-// receives ping results as they finish. Returning false cancels/reaps all work.
+// config. Callers choose policy order or completion order. Returning false
+// cancels and reaps all probes before a configuration can be applied.
 func (w *Watchdog) probeVerifiedCandidates(parent context.Context, candidates []verifiedCandidate, ordered bool, visit func(int, xkeen.ProbeResult, error) bool) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()

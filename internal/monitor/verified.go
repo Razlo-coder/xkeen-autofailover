@@ -11,6 +11,8 @@ import (
 	"xkeen-panel/internal/xkeen"
 )
 
+const fastRecoveryThresholdMs = 400
+
 func (w *Watchdog) configureVerified() {
 	if w.verifiedProbe != nil {
 		return
@@ -168,6 +170,17 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 			w.writeLog("[VERIFY] Ошибка проверки: %v", probeErr)
 		}
 		if fails < w.config.MaxFails {
+			if fails == 1 {
+				// The status is already offline. Try a fast preferred replacement
+				// now; keep the configured failure count for slower fallbacks.
+				if _, err := w.subscription.RefreshContext(ctx); err != nil {
+					w.writeLog("[VERIFY] Обновление недоступно, использую сохранённые серверы: %v", err)
+				}
+				w.rememberVerifiedCurrent(ob)
+				if err := w.tryVerifiedCandidatesMode(ctx, ob, nil, true); err != nil && ctx.Err() == nil {
+					w.writeLog("[VERIFY] Быстрый поиск: %v", err)
+				}
+			}
 			return
 		}
 	}
@@ -221,6 +234,10 @@ func (w *Watchdog) failoverVerified(ctx context.Context, current map[string]inte
 }
 
 func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string]interface{}, higherThan *models.Server) error {
+	return w.tryVerifiedCandidatesMode(ctx, current, higherThan, false)
+}
+
+func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[string]interface{}, higherThan *models.Server, fastOnly bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -235,9 +252,19 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 		return err
 	}
 	candidates := w.verifiedCandidates(current, higherThan, true)
+	if fastOnly {
+		preferred := make([]verifiedCandidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			if fastRecoveryPriority(candidate.server, w.config.VerifiedFailover) {
+				preferred = append(preferred, candidate)
+			}
+		}
+		candidates = preferred
+	}
 	w.mu.RLock()
-	allowSlowFallback := higherThan == nil && !w.connected
+	urgent := higherThan == nil && !w.connected
 	w.mu.RUnlock()
+	allowSlowFallback := urgent && !fastOnly
 	type slowCandidate struct {
 		candidate verifiedCandidate
 		latency   int
@@ -255,14 +282,28 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 		}
 		slow = append(slow, slowCandidate{candidate: candidate, latency: latency, order: order})
 	}
-	order := 0
 	for len(candidates) > 0 {
 		if ctx.Err() != nil || !w.IsActive() {
 			return fmt.Errorf("автопереключение отменено")
 		}
 		picked := -1
 		var result xkeen.ProbeResult
-		err := w.probeVerifiedCandidates(ctx, candidates, true, func(i int, r xkeen.ProbeResult, probeErr error) bool {
+		seen := make([]bool, len(candidates))
+		good := make([]bool, len(candidates))
+		results := make([]xkeen.ProbeResult, len(candidates))
+		pickFast := func() bool {
+			for j := range candidates {
+				if !good[j] || results[j].Latency < 0 || results[j].Latency > fastRecoveryThresholdMs ||
+					!fastRecoveryPriority(candidates[j].server, w.config.VerifiedFailover) {
+					continue
+				}
+				picked, result = j, results[j]
+				return true
+			}
+			return false
+		}
+		err := w.probeVerifiedCandidates(ctx, candidates, !urgent, func(i int, r xkeen.ProbeResult, probeErr error) bool {
+			seen[i] = true
 			server := candidates[i].server
 			server.Latency = -1
 			if probeErr == nil && r.OK {
@@ -270,28 +311,56 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 			}
 			w.subscription.UpdateLatencies([]models.Server{server})
 			if probeErr == nil && r.OK && !w.acceptableQuality(r) {
-				rememberSlow(candidates[i], r.Latency, order+i)
+				rememberSlow(candidates[i], r.Latency, candidates[i].order)
 				if r.Latency >= 0 {
 					w.writeLog("[QUALITY] %s слишком медленный: %d мс", server.Name, r.Latency)
 				}
-				return true
+				return !urgent || !pickFast()
 			}
 			if probeErr != nil || !r.OK {
-				w.blacklistServer(server.RawURI)
-				return true
+				if !fastOnly {
+					w.blacklistServer(server.RawURI)
+				}
+				return !urgent || !pickFast()
 			}
-			picked, result = i, r
-			return false
+			good[i], results[i] = true, r
+			if !urgent {
+				picked, result = i, r
+				return false
+			}
+			// During an outage, the first fast preferred result wins.
+			// Waiting for a higher-ranked server would leave the VPN offline.
+			return !pickFast()
 		})
 		if err != nil {
 			return err
 		}
+		if picked < 0 && urgent && !fastOnly {
+			// No preferred node met the fast threshold. Fall back to the
+			// regular quality limit and policy order after the complete scan.
+			for i := range candidates {
+				if good[i] {
+					picked, result = i, results[i]
+					break
+				}
+			}
+		}
 		if picked < 0 {
 			break
 		}
-		server, candidate := candidates[picked].server, candidates[picked].outbound
-		order += picked + 1
-		candidates = candidates[picked+1:]
+		chosen := candidates[picked]
+		server, candidate := chosen.server, chosen.outbound
+		if urgent {
+			remaining := make([]verifiedCandidate, 0, len(candidates)-1)
+			for i, item := range candidates {
+				if i != picked && (!seen[i] || good[i]) {
+					remaining = append(remaining, item)
+				}
+			}
+			candidates = remaining
+		} else {
+			candidates = candidates[picked+1:]
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -302,7 +371,7 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 			result = confirmed
 			if !w.acceptableQuality(confirmed) {
 				if confirmed.OK {
-					rememberSlow(verifiedCandidate{server: server, outbound: candidate}, confirmed.Latency, order-1)
+					rememberSlow(chosen, confirmed.Latency, chosen.order)
 				}
 				server.Latency = confirmed.Latency
 				w.subscription.UpdateLatencies([]models.Server{server})
@@ -360,6 +429,9 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 	}
 	if higherThan != nil {
 		return fmt.Errorf("более приоритетных серверов с допустимым качеством нет; текущее соединение сохранено")
+	}
+	if fastOnly {
+		return fmt.Errorf("приоритетных серверов с задержкой до %d мс пока нет", fastRecoveryThresholdMs)
 	}
 	return fmt.Errorf("серверов с допустимым качеством по выбранным правилам нет; текущая конфигурация сохранена, попытка будет повторена")
 }

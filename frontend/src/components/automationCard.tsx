@@ -128,7 +128,10 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
             <CardContent className='space-y-4'>
                 <p className='text-xs text-muted-foreground'>
                     При отказе или высокой задержке подписка обновляется, затем
-                    проверяются серверы по этим правилам.
+                    проверяются серверы по этим правилам. Если VPN недоступен,
+                    поиск начинается после первой неудачной проверки: сервер из
+                    заданных приоритетов с задержкой до 400 мс подключается без
+                    ожидания всего списка.
                 </p>
                 <div className='flex items-center justify-between gap-2'>
                     <label htmlFor='automation-enabled' className='text-sm'>

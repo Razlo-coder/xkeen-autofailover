@@ -151,7 +151,7 @@ func TestVerifiedFailoverNLBeforeDEExcludedNeverProbed(t *testing.T) {
 	w.verifiedApplier.Probe = w.verifiedProbe
 	w.checkVerified(context.Background())
 	w.checkVerified(context.Background())
-	if !reflect.DeepEqual(calls, []string{"192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.3"}) {
+	if !reflect.DeepEqual(calls, []string{"192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.3", "192.0.2.3"}) {
 		t.Fatalf("probe order: %v", calls)
 	}
 	active := w.subscription.GetActiveServer()
@@ -197,10 +197,10 @@ func TestVerifiedFailureRefreshesChangedIPWithSameName(t *testing.T) {
 	w.verifiedApplier.Probe = w.verifiedProbe
 	w.checkVerified(context.Background())
 	w.checkVerified(context.Background())
-	if len(calls) < 4 || calls[0] != "192.0.2.1" || calls[1] != "192.0.2.1" || calls[len(calls)-1] != "192.0.2.2" {
+	if len(calls) < 3 || calls[0] != "192.0.2.1" || calls[len(calls)-1] != "192.0.2.2" {
 		t.Fatalf("fresh IP was not checked and confirmed: %v", calls)
 	}
-	for _, addr := range calls[2:] {
+	for _, addr := range calls[1:] {
 		if addr != "192.0.2.2" && addr != "192.0.2.5" {
 			t.Fatalf("retired endpoint probed: %s", addr)
 		}
