@@ -47,6 +47,7 @@ verified_failover:
   bypass_mark: 255
   probe_timeout_sec: 8
   retry_interval_sec: 120
+  offline_fail_count: 1
 POLICY
  fi
 else
@@ -72,6 +73,7 @@ verified_failover:
   bypass_mark: 255
   probe_timeout_sec: 8
   retry_interval_sec: 120
+  offline_fail_count: 1
 CONFIG
 fi
 "$stage/panel" -config "$stage/config.yaml" -preflight

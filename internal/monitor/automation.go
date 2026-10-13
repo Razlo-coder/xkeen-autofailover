@@ -24,6 +24,9 @@ func normalizeAutomation(s models.AutomationSettings) (models.AutomationSettings
 	if !models.ValidConnectionSettings(s.QualityThresholdMs, s.QualityFailCount, s.PriorityCheckSec) {
 		return s, fmt.Errorf("порог задержки: 100–60000 мс; плохих проверок: 1–10; интервал возврата: 60–86400 секунд")
 	}
+	if s.OfflineFailCount < 1 || s.OfflineFailCount > 10 {
+		return s, fmt.Errorf("неудачных проверок VPN до замены: 1–10")
+	}
 	normalize := func(values []string, countries bool) ([]string, error) {
 		if len(values) > 300 {
 			return nil, fmt.Errorf("слишком много правил: максимум 300")
@@ -77,7 +80,7 @@ func (w *Watchdog) automationLocked() models.AutomationSettings {
 	return models.AutomationSettings{Enabled: w.config.WatchdogAutoStart, SourcePriority: p.SourcePriority, CountryPriority: copyList(p.CountryPriority),
 		AllowOtherCountries: p.AllowOtherCountries, PreferredServerNames: copyList(p.PreferredServerNames),
 		ExcludedServerNames: copyList(p.ExcludedServerNames), ExcludeNameContains: copyList(p.ExcludeNameContains),
-		QualityEnabled: p.QualityEnabled, QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
+		OfflineFailCount: p.OfflineFailCount, QualityEnabled: p.QualityEnabled, QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
 		ReturnToPriority: p.ReturnToPriority, PriorityCheckSec: p.PriorityCheckSec}
 }
 
@@ -91,6 +94,7 @@ func (w *Watchdog) applyAutomationLocked(s models.AutomationSettings) {
 	w.config.VerifiedFailover.PreferredServerNames = s.PreferredServerNames
 	w.config.VerifiedFailover.ExcludedServerNames = s.ExcludedServerNames
 	w.config.VerifiedFailover.ExcludeNameContains = s.ExcludeNameContains
+	w.config.VerifiedFailover.OfflineFailCount = s.OfflineFailCount
 	w.config.VerifiedFailover.QualityEnabled = s.QualityEnabled
 	w.config.VerifiedFailover.QualityThresholdMs = s.QualityThresholdMs
 	w.config.VerifiedFailover.QualityFailCount = s.QualityFailCount

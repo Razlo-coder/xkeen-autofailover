@@ -184,7 +184,7 @@ func TestOutageSwitchesToFastSamePriorityWithoutWaitingForWholeScan(t *testing.T
 func TestFirstOfflineCheckStartsFastRecovery(t *testing.T) {
 	w := verifiedWatchdog(t)
 	importVerified(t, w)
-	w.config.MaxFails = 3
+	w.config.VerifiedFailover.OfflineFailCount = 3
 	w.verifiedProbe = func(_ context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
 		if addressOf(ob) == "192.0.2.1" {
 			return xkeen.ProbeResult{OK: false, Latency: -1}, nil
@@ -201,10 +201,27 @@ func TestFirstOfflineCheckStartsFastRecovery(t *testing.T) {
 	}
 }
 
+func TestDefaultOfflineThresholdAcceptsOnlyAvailableSlowServerImmediately(t *testing.T) {
+	w := verifiedWatchdog(t)
+	importVerified(t, w)
+	w.config.MaxFails = 3 // Legacy watchdog setting must not delay verified recovery.
+	w.verifiedProbe = func(_ context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
+		if addressOf(ob) == "192.0.2.3" {
+			return xkeen.ProbeResult{OK: true, Latency: 3000}, nil
+		}
+		return xkeen.ProbeResult{OK: false, Latency: -1}, nil
+	}
+	w.verifiedApplier.Probe = w.verifiedProbe
+	w.checkVerified(context.Background())
+	if addressOf(mustSingle(t, w.config.OutboundsFile)) != "192.0.2.3" {
+		t.Fatal("default verified recovery waited for another failed check")
+	}
+}
+
 func TestFirstOfflineCheckDoesNotAcceptSlowFallback(t *testing.T) {
 	w := verifiedWatchdog(t)
 	importVerified(t, w)
-	w.config.MaxFails = 3
+	w.config.VerifiedFailover.OfflineFailCount = 3
 	w.verifiedProbe = func(_ context.Context, ob map[string]interface{}) (xkeen.ProbeResult, error) {
 		if addressOf(ob) == "192.0.2.3" {
 			return xkeen.ProbeResult{OK: true, Latency: 3000}, nil

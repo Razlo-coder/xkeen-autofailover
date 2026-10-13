@@ -129,9 +129,9 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                 <p className='text-xs text-muted-foreground'>
                     При отказе или высокой задержке подписка обновляется, затем
                     проверяются серверы по этим правилам. Если VPN недоступен,
-                    поиск начинается после первой неудачной проверки: сервер из
-                    заданных приоритетов с задержкой до 400 мс подключается без
-                    ожидания всего списка.
+                    быстрый сервер из заданных приоритетов ищется уже после
+                    первой неудачной проверки. Полный поиск начинается после
+                    заданного ниже числа проверок.
                 </p>
                 <div className='flex items-center justify-between gap-2'>
                     <label htmlFor='automation-enabled' className='text-sm'>
@@ -275,6 +275,36 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                             Добавить
                         </Button>
                     </div>
+                </div>
+                <div className='space-y-2 border-t pt-3'>
+                    <label
+                        htmlFor='offline-fail-count'
+                        className='block space-y-1 text-sm font-medium'
+                    >
+                        <span>Проверок без VPN до замены</span>
+                        <input
+                            id='offline-fail-count'
+                            type='number'
+                            min={1}
+                            max={10}
+                            step={1}
+                            className={fieldClass}
+                            value={draft.offline_fail_count}
+                            onChange={e =>
+                                change({
+                                    offline_fail_count:
+                                        e.target.valueAsNumber || 0,
+                                })
+                            }
+                        />
+                    </label>
+                    <p className='text-xs text-muted-foreground'>
+                        По умолчанию — 1: при первом неподтверждённом соединении
+                        обновить подписки и подобрать любой рабочий сервер по
+                        правилам. Если задать больше, быстрый приоритетный
+                        сервер до 400 мс всё равно может подключиться после
+                        первой проверки.
+                    </p>
                 </div>
                 <div className='space-y-3 border-t pt-3'>
                     <div className='flex items-center justify-between gap-3'>

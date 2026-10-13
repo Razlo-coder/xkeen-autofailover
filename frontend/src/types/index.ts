@@ -23,6 +23,7 @@ export type AutomationSettings = {
     preferred_server_names: string[]
     excluded_server_names: string[]
     exclude_name_contains: string[]
+    offline_fail_count: number
     quality_enabled: boolean
     quality_threshold_ms: number
     quality_fail_count: number

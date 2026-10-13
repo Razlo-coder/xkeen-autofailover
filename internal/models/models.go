@@ -78,6 +78,7 @@ type VerifiedFailoverConfig struct {
 	BypassMark           int      `yaml:"bypass_mark"`
 	ProbeTimeoutSec      int      `yaml:"probe_timeout_sec"`
 	RetryIntervalSec     int      `yaml:"retry_interval_sec"`
+	OfflineFailCount     int      `yaml:"offline_fail_count"`
 	QualityEnabled       bool     `yaml:"quality_enabled"`
 	QualityThresholdMs   int      `yaml:"quality_threshold_ms"`
 	QualityFailCount     int      `yaml:"quality_fail_count"`
@@ -88,7 +89,7 @@ type VerifiedFailoverConfig struct {
 // DefaultVerifiedFailover also supplies missing fields in older YAML installs.
 func DefaultVerifiedFailover() VerifiedFailoverConfig {
 	return VerifiedFailoverConfig{SourcePriority: "all", AllowOtherCountries: true, BypassMark: 255,
-		ProbeTimeoutSec: 8, RetryIntervalSec: 120, QualityEnabled: true,
+		ProbeTimeoutSec: 8, RetryIntervalSec: 120, OfflineFailCount: 1, QualityEnabled: true,
 		QualityThresholdMs: 1500, QualityFailCount: 3, ReturnToPriority: true, PriorityCheckSec: 300}
 }
 
@@ -106,6 +107,7 @@ type AutomationSettings struct {
 	PreferredServerNames []string `json:"preferred_server_names"`
 	ExcludedServerNames  []string `json:"excluded_server_names"`
 	ExcludeNameContains  []string `json:"exclude_name_contains"`
+	OfflineFailCount     int      `json:"offline_fail_count"`
 	QualityEnabled       bool     `json:"quality_enabled"`
 	QualityThresholdMs   int      `json:"quality_threshold_ms"`
 	QualityFailCount     int      `json:"quality_fail_count"`

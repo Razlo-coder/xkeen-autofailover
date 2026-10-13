@@ -22,7 +22,7 @@ func TestOlderAutomationFileKeepsNewDefaultsAndSavedOptOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := w.GetAutomation()
-	if !s.QualityEnabled || s.QualityThresholdMs != 1500 || s.QualityFailCount != 3 || !s.ReturnToPriority || s.PriorityCheckSec != 300 {
+	if s.OfflineFailCount != 1 || !s.QualityEnabled || s.QualityThresholdMs != 1500 || s.QualityFailCount != 3 || !s.ReturnToPriority || s.PriorityCheckSec != 300 {
 		t.Fatal("older file cleared new defaults")
 	}
 	s.QualityEnabled = false
@@ -49,6 +49,7 @@ func TestAutomationPersistsAndKeepsRotatedNamePreferences(t *testing.T) {
 	settings.PreferredServerNames = []string{"Amsterdam Extra"}
 	settings.ExcludedServerNames = []string{"Unsupported"}
 	settings.ExcludeNameContains = []string{"Whitelist2"}
+	settings.OfflineFailCount = 2
 	settings.QualityThresholdMs = 1200
 	settings.QualityFailCount = 2
 	settings.ReturnToPriority = false
@@ -100,6 +101,11 @@ func TestAutomationInvalidOrUnsavedRulesDoNotReplaceLiveRules(t *testing.T) {
 	badPriority.SourcePriority = "unknown"
 	if err := w.SaveAutomation(badPriority); err == nil {
 		t.Fatal("unknown subscription preference accepted")
+	}
+	badCount := before
+	badCount.OfflineFailCount = 0
+	if err := w.SaveAutomation(badCount); err == nil {
+		t.Fatal("zero outage failure threshold accepted")
 	}
 	if err := w.SaveAutomation(models.AutomationSettings{}); err == nil {
 		t.Fatal("empty strict allowlist accepted")

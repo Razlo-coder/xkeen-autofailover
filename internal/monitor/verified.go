@@ -165,11 +165,11 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 			return
 		}
 	} else {
-		w.writeLog("[VERIFY] VPN не подтвердился: HTTPS %d/%d, ядро=%v, попытка %d/%d", result.Successes, result.Total, running, fails, w.config.MaxFails)
+		w.writeLog("[VERIFY] VPN не подтвердился: HTTPS %d/%d, ядро=%v, попытка %d/%d", result.Successes, result.Total, running, fails, w.config.VerifiedFailover.OfflineFailCount)
 		if probeErr != nil {
 			w.writeLog("[VERIFY] Ошибка проверки: %v", probeErr)
 		}
-		if fails < w.config.MaxFails {
+		if fails < w.config.VerifiedFailover.OfflineFailCount {
 			if fails == 1 {
 				// The status is already offline. Try a fast preferred replacement
 				// now; keep the configured failure count for slower fallbacks.

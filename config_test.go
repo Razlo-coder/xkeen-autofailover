@@ -17,7 +17,7 @@ func TestOlderConfigGainsConnectionDefaultsAndPreservesStrictCountries(t *testin
 		t.Fatal(err)
 	}
 	p := cfg.VerifiedFailover
-	if p.AllowOtherCountries || !p.QualityEnabled || p.QualityThresholdMs != 1500 || p.QualityFailCount != 3 || !p.ReturnToPriority || p.PriorityCheckSec != 300 {
+	if p.AllowOtherCountries || p.OfflineFailCount != 1 || !p.QualityEnabled || p.QualityThresholdMs != 1500 || p.QualityFailCount != 3 || !p.ReturnToPriority || p.PriorityCheckSec != 300 {
 		t.Fatalf("upgrade defaults or old country policy lost: %+v", p)
 	}
 	if err := os.WriteFile(path, []byte(old+"  quality_enabled: false\n  return_to_priority: false\n"), 0600); err != nil {
