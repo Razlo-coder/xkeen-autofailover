@@ -371,6 +371,9 @@ func loadConfig(path string) (*models.Config, error) {
 		if !models.ValidConnectionSettings(p.QualityThresholdMs, p.QualityFailCount, p.PriorityCheckSec) {
 			return nil, fmt.Errorf("неверные параметры качества соединения или возврата к приоритету")
 		}
+		if !models.ValidSpeedSettings(p.SpeedThresholdMbps, p.SpeedCheckIntervalSec) {
+			return nil, fmt.Errorf("неверные параметры проверки скорости")
+		}
 		if (!p.AllowOtherCountries && len(p.CountryPriority) == 0) || p.BypassMark < 1 || p.ProbeTimeoutSec < 1 || p.ProbeTimeoutSec > 60 || p.RetryIntervalSec < 30 || p.OfflineFailCount < 1 || p.OfflineFailCount > 10 {
 			return nil, fmt.Errorf("неверные параметры verified_failover")
 		}

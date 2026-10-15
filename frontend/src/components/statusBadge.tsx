@@ -5,11 +5,15 @@ export function StatusBadge({
     xrayRunning,
     latency,
     qualityDegraded = false,
+    speedMbps = 0,
+    speedDegraded = false,
 }: {
     connected: boolean
     xrayRunning: boolean
     latency: number
     qualityDegraded?: boolean
+    speedMbps?: number
+    speedDegraded?: boolean
 }) {
     return (
         <div className='flex flex-wrap items-center gap-3'>
@@ -69,6 +73,11 @@ export function StatusBadge({
                     </span>
                 )}
             </div>
+            {connected && speedMbps > 0 && (
+                <span className={cn('text-xs', speedDegraded ? 'text-amber-400' : 'text-emerald-400')}>
+                    ↓ {speedMbps.toFixed(1)} Мбит/с{speedDegraded ? ' · низкая скорость' : ''}
+                </span>
+            )}
         </div>
     )
 }

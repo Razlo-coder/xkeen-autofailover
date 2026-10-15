@@ -27,6 +27,9 @@ func normalizeAutomation(s models.AutomationSettings) (models.AutomationSettings
 	if s.OfflineFailCount < 1 || s.OfflineFailCount > 10 {
 		return s, fmt.Errorf("неудачных проверок VPN до замены: 1–10")
 	}
+	if !models.ValidSpeedSettings(s.SpeedThresholdMbps, s.SpeedCheckIntervalSec) {
+		return s, fmt.Errorf("минимальная скорость: 1–1000 Мбит/с; интервал проверки: 1–60 минут")
+	}
 	normalize := func(values []string, countries bool) ([]string, error) {
 		if len(values) > 300 {
 			return nil, fmt.Errorf("слишком много правил: максимум 300")
@@ -80,7 +83,9 @@ func (w *Watchdog) automationLocked() models.AutomationSettings {
 	return models.AutomationSettings{Enabled: w.config.WatchdogAutoStart, SourcePriority: p.SourcePriority, CountryPriority: copyList(p.CountryPriority),
 		AllowOtherCountries: p.AllowOtherCountries, PreferredServerNames: copyList(p.PreferredServerNames),
 		ExcludedServerNames: copyList(p.ExcludedServerNames), ExcludeNameContains: copyList(p.ExcludeNameContains),
-		OfflineFailCount: p.OfflineFailCount, QualityEnabled: p.QualityEnabled, QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
+		OfflineFailCount: p.OfflineFailCount, SpeedEnabled: p.SpeedEnabled, SpeedThresholdMbps: p.SpeedThresholdMbps,
+		SpeedCheckIntervalSec: p.SpeedCheckIntervalSec, QualityEnabled: p.QualityEnabled,
+		QualityThresholdMs: p.QualityThresholdMs, QualityFailCount: p.QualityFailCount,
 		ReturnToPriority: p.ReturnToPriority, PriorityCheckSec: p.PriorityCheckSec}
 }
 
@@ -95,6 +100,9 @@ func (w *Watchdog) applyAutomationLocked(s models.AutomationSettings) {
 	w.config.VerifiedFailover.ExcludedServerNames = s.ExcludedServerNames
 	w.config.VerifiedFailover.ExcludeNameContains = s.ExcludeNameContains
 	w.config.VerifiedFailover.OfflineFailCount = s.OfflineFailCount
+	w.config.VerifiedFailover.SpeedEnabled = s.SpeedEnabled
+	w.config.VerifiedFailover.SpeedThresholdMbps = s.SpeedThresholdMbps
+	w.config.VerifiedFailover.SpeedCheckIntervalSec = s.SpeedCheckIntervalSec
 	w.config.VerifiedFailover.QualityEnabled = s.QualityEnabled
 	w.config.VerifiedFailover.QualityThresholdMs = s.QualityThresholdMs
 	w.config.VerifiedFailover.QualityFailCount = s.QualityFailCount

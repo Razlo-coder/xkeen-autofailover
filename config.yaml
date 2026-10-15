@@ -22,6 +22,10 @@ verified_failover:
   exclude_name_contains: []
   bypass_mark: 255
   probe_timeout_sec: 8
+  probe_addr: 127.0.0.1:10086
+  speed_enabled: true
+  speed_threshold_mbps: 5
+  speed_check_interval_sec: 300
   retry_interval_sec: 120
   offline_fail_count: 1
   quality_enabled: true

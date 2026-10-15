@@ -372,8 +372,36 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                         При задержке выше порога в нескольких проверках подряд
                         ищется замена с допустимой задержкой. Если её нет,
                         текущее соединение сохраняется. Пинг — время самого
-                        быстрого успешного HTTPS-ответа через VPN; скорость
-                        скачивания не измеряется.
+                        быстрого успешного HTTPS-ответа через работающий Xray.
+                    </p>
+                </div>
+                <div className='space-y-3 border-t pt-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                        <label htmlFor='speed-enabled' className='text-sm font-medium'>Контроль скорости</label>
+                        <Switch id='speed-enabled' checked={draft.speed_enabled}
+                            onCheckedChange={speed_enabled => change({ speed_enabled })} />
+                    </div>
+                    <div className='grid grid-cols-2 gap-3'>
+                        <label htmlFor='speed-threshold' className='space-y-1 text-sm'>
+                            <span className='block'>Минимум, Мбит/с</span>
+                            <input id='speed-threshold' type='number' min={1} max={1000} step={1}
+                                className={fieldClass} disabled={!draft.speed_enabled}
+                                value={draft.speed_threshold_mbps}
+                                onChange={e => change({ speed_threshold_mbps: e.target.valueAsNumber || 0 })} />
+                        </label>
+                        <label htmlFor='speed-interval' className='space-y-1 text-sm'>
+                            <span className='block'>Интервал, мин</span>
+                            <input id='speed-interval' type='number' min={1} max={60} step={1}
+                                className={fieldClass} disabled={!draft.speed_enabled}
+                                value={draft.speed_check_interval_sec / 60}
+                                onChange={e => change({ speed_check_interval_sec: (e.target.valueAsNumber || 0) * 60 })} />
+                        </label>
+                    </div>
+                    <p className='text-xs text-muted-foreground'>
+                        Каждая проверка скачивает 512 КБ через VPN. После двух
+                        медленных измерений панель ищет замену и проверяет её
+                        скорость. Если подходящей замены нет, текущий сервер
+                        остаётся подключённым.
                     </p>
                 </div>
                 <div className='space-y-3 border-t pt-3'>

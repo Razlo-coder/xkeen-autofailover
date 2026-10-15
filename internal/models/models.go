@@ -68,28 +68,33 @@ type Config struct {
 // VerifiedFailoverConfig enables a conservative single-outbound controller.
 // CountryPriority is an allowlist as well as an ordered preference.
 type VerifiedFailoverConfig struct {
-	Enabled              bool     `yaml:"enabled"`
-	SourcePriority       string   `yaml:"source_priority"`
-	CountryPriority      []string `yaml:"country_priority"`
-	AllowOtherCountries  bool     `yaml:"allow_other_countries"`
-	PreferredServerNames []string `yaml:"preferred_server_names"`
-	ExcludedServerNames  []string `yaml:"excluded_server_names"`
-	ExcludeNameContains  []string `yaml:"exclude_name_contains"`
-	BypassMark           int      `yaml:"bypass_mark"`
-	ProbeTimeoutSec      int      `yaml:"probe_timeout_sec"`
-	RetryIntervalSec     int      `yaml:"retry_interval_sec"`
-	OfflineFailCount     int      `yaml:"offline_fail_count"`
-	QualityEnabled       bool     `yaml:"quality_enabled"`
-	QualityThresholdMs   int      `yaml:"quality_threshold_ms"`
-	QualityFailCount     int      `yaml:"quality_fail_count"`
-	ReturnToPriority     bool     `yaml:"return_to_priority"`
-	PriorityCheckSec     int      `yaml:"priority_check_sec"`
+	Enabled               bool     `yaml:"enabled"`
+	SourcePriority        string   `yaml:"source_priority"`
+	CountryPriority       []string `yaml:"country_priority"`
+	AllowOtherCountries   bool     `yaml:"allow_other_countries"`
+	PreferredServerNames  []string `yaml:"preferred_server_names"`
+	ExcludedServerNames   []string `yaml:"excluded_server_names"`
+	ExcludeNameContains   []string `yaml:"exclude_name_contains"`
+	BypassMark            int      `yaml:"bypass_mark"`
+	ProbeTimeoutSec       int      `yaml:"probe_timeout_sec"`
+	ProbeAddr             string   `yaml:"probe_addr"`
+	RetryIntervalSec      int      `yaml:"retry_interval_sec"`
+	OfflineFailCount      int      `yaml:"offline_fail_count"`
+	SpeedEnabled          bool     `yaml:"speed_enabled"`
+	SpeedThresholdMbps    int      `yaml:"speed_threshold_mbps"`
+	SpeedCheckIntervalSec int      `yaml:"speed_check_interval_sec"`
+	QualityEnabled        bool     `yaml:"quality_enabled"`
+	QualityThresholdMs    int      `yaml:"quality_threshold_ms"`
+	QualityFailCount      int      `yaml:"quality_fail_count"`
+	ReturnToPriority      bool     `yaml:"return_to_priority"`
+	PriorityCheckSec      int      `yaml:"priority_check_sec"`
 }
 
 // DefaultVerifiedFailover also supplies missing fields in older YAML installs.
 func DefaultVerifiedFailover() VerifiedFailoverConfig {
 	return VerifiedFailoverConfig{SourcePriority: "all", AllowOtherCountries: true, BypassMark: 255,
-		ProbeTimeoutSec: 8, RetryIntervalSec: 120, OfflineFailCount: 1, QualityEnabled: true,
+		ProbeTimeoutSec: 8, ProbeAddr: "127.0.0.1:10086", RetryIntervalSec: 120, OfflineFailCount: 1,
+		SpeedEnabled: true, SpeedThresholdMbps: 5, SpeedCheckIntervalSec: 300, QualityEnabled: true,
 		QualityThresholdMs: 1500, QualityFailCount: 3, ReturnToPriority: true, PriorityCheckSec: 300}
 }
 
@@ -97,22 +102,29 @@ func ValidConnectionSettings(threshold, count, interval int) bool {
 	return threshold >= 100 && threshold <= 60000 && count >= 1 && count <= 10 && interval >= 60 && interval <= 86400
 }
 
+func ValidSpeedSettings(thresholdMbps, intervalSec int) bool {
+	return thresholdMbps >= 1 && thresholdMbps <= 1000 && intervalSec >= 60 && intervalSec <= 3600
+}
+
 // AutomationSettings is user-editable in the panel and stored independently
 // from installation paths and packet marks. Names survive endpoint rotation.
 type AutomationSettings struct {
-	Enabled              bool     `json:"enabled"`
-	SourcePriority       string   `json:"source_priority"`
-	CountryPriority      []string `json:"country_priority"`
-	AllowOtherCountries  bool     `json:"allow_other_countries"`
-	PreferredServerNames []string `json:"preferred_server_names"`
-	ExcludedServerNames  []string `json:"excluded_server_names"`
-	ExcludeNameContains  []string `json:"exclude_name_contains"`
-	OfflineFailCount     int      `json:"offline_fail_count"`
-	QualityEnabled       bool     `json:"quality_enabled"`
-	QualityThresholdMs   int      `json:"quality_threshold_ms"`
-	QualityFailCount     int      `json:"quality_fail_count"`
-	ReturnToPriority     bool     `json:"return_to_priority"`
-	PriorityCheckSec     int      `json:"priority_check_sec"`
+	Enabled               bool     `json:"enabled"`
+	SourcePriority        string   `json:"source_priority"`
+	CountryPriority       []string `json:"country_priority"`
+	AllowOtherCountries   bool     `json:"allow_other_countries"`
+	PreferredServerNames  []string `json:"preferred_server_names"`
+	ExcludedServerNames   []string `json:"excluded_server_names"`
+	ExcludeNameContains   []string `json:"exclude_name_contains"`
+	OfflineFailCount      int      `json:"offline_fail_count"`
+	SpeedEnabled          bool     `json:"speed_enabled"`
+	SpeedThresholdMbps    int      `json:"speed_threshold_mbps"`
+	SpeedCheckIntervalSec int      `json:"speed_check_interval_sec"`
+	QualityEnabled        bool     `json:"quality_enabled"`
+	QualityThresholdMs    int      `json:"quality_threshold_ms"`
+	QualityFailCount      int      `json:"quality_fail_count"`
+	ReturnToPriority      bool     `json:"return_to_priority"`
+	PriorityCheckSec      int      `json:"priority_check_sec"`
 }
 
 // User is the panel account (data/user.json).
@@ -174,6 +186,9 @@ type Status struct {
 	CurrentSourceID     *int       `json:"current_source_id,omitempty"`
 	Protocol            string     `json:"protocol"`
 	Latency             int        `json:"latency_ms"`
+	SpeedMbps           float64    `json:"speed_mbps"`
+	SpeedDegraded       bool       `json:"speed_degraded"`
+	LastSpeedCheck      *time.Time `json:"last_speed_check,omitempty"`
 	Uptime              string     `json:"uptime"`
 	ConnectedSince      *time.Time `json:"connected_since,omitempty"`
 	UptimeSeconds       int64      `json:"uptime_seconds"`

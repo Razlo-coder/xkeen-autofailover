@@ -215,6 +215,8 @@ export function DashboardPage() {
                                 xrayRunning={s?.xray_running ?? false}
                                 latency={s?.latency_ms ?? -1}
                                 qualityDegraded={s?.quality_degraded ?? false}
+                                speedMbps={s?.speed_mbps ?? 0}
+                                speedDegraded={s?.speed_degraded ?? false}
                             />
                             {s?.current_server && (
                                 <span className='text-xs text-muted-foreground'>

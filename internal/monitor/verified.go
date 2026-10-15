@@ -53,6 +53,21 @@ func (w *Watchdog) PrepareVerified() error {
 	if err := w.verifiedApplier.Recover(); err != nil {
 		return fmt.Errorf("восстановление прерванного переключения: %w", err)
 	}
+	ready, changed, routeErr := xkeen.EnsureProbeRoute(rt, w.config.VerifiedFailover.ProbeAddr, w.detector.Topology())
+	if routeErr == nil && ready && changed {
+		_, routeErr = xkeen.RestartAndWait(rt.Dispatcher)
+	}
+	if routeErr == nil && ready {
+		w.liveProbe = func(ctx context.Context, _ map[string]interface{}) (xkeen.ProbeResult, error) {
+			return xkeen.ProbeRunningXray(ctx, w.config.VerifiedFailover.ProbeAddr, w.config.HealthCheckURLs,
+				time.Duration(w.config.VerifiedFailover.ProbeTimeoutSec)*time.Second)
+		}
+		w.liveSpeedProbe = func(ctx context.Context) (float64, error) {
+			return xkeen.MeasureRunningSpeed(ctx, w.config.VerifiedFailover.ProbeAddr, 20*time.Second)
+		}
+	} else {
+		w.writeLog("[VERIFY] Локальный маршрут Xray недоступен, проверка доступности использует тестовое ядро: %v", routeErr)
+	}
 	ob, err := xkeen.SingleProxy(w.config.OutboundsFile)
 	if err != nil {
 		return err
@@ -111,7 +126,11 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 		return
 	}
 	w.rememberVerifiedCurrent(ob)
-	result, probeErr := w.verifiedProbe(ctx, ob)
+	probe := w.verifiedProbe
+	if w.liveProbe != nil {
+		probe = w.liveProbe
+	}
+	result, probeErr := probe(ctx, ob)
 	if ctx.Err() != nil {
 		return
 	}
@@ -136,6 +155,9 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 	} else {
 		w.failCount++
 		w.qualityFailCount = 0
+		w.speedFailCount = 0
+		w.lastSpeedMbps = 0
+		w.lastSpeedCheck = time.Time{}
 		w.lastLatency = -1
 	}
 	fails := w.failCount
@@ -147,6 +169,40 @@ func (w *Watchdog) checkVerified(ctx context.Context) {
 		w.endConnection()
 	}
 	w.publishStatus()
+	if ok && w.config.VerifiedFailover.SpeedEnabled && w.liveSpeedProbe != nil &&
+		time.Since(w.lastSpeedCheck) >= time.Duration(w.config.VerifiedFailover.SpeedCheckIntervalSec)*time.Second {
+		w.mu.Lock()
+		w.lastSpeedCheck = time.Now()
+		w.mu.Unlock()
+		mbps, speedErr := w.liveSpeedProbe(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if speedErr != nil {
+			w.writeLog("[SPEED] Проверка скорости недоступна: %v", speedErr)
+		} else {
+			w.mu.Lock()
+			w.lastSpeedMbps = mbps
+			if mbps < float64(w.config.VerifiedFailover.SpeedThresholdMbps) {
+				w.speedFailCount++
+			} else {
+				w.speedFailCount = 0
+			}
+			slowCount := w.speedFailCount
+			w.mu.Unlock()
+			w.writeLog("[SPEED] %.1f Мбит/с, порог %d Мбит/с, медленных проверок %d/2", mbps, w.config.VerifiedFailover.SpeedThresholdMbps, slowCount)
+			w.publishStatus()
+			if slowCount >= 2 {
+				if _, err := w.subscription.RefreshContext(ctx); err != nil {
+					w.writeLog("[SPEED] Обновление подписки недоступно, использую сохранённые серверы: %v", err)
+				}
+				if err := w.tryVerifiedCandidatesMode(ctx, ob, nil, false, true); err != nil && ctx.Err() == nil {
+					w.writeLog("[SPEED] Замена не найдена: %v", err)
+				}
+				return
+			}
+		}
+	}
 	if ok && !poor {
 		w.writeLog("[VERIFY] VPN работает: HTTPS %d/%d, %d мс", result.Successes, result.Total, result.Latency)
 		w.returnVerifiedPriority(ctx, ob)
@@ -237,7 +293,8 @@ func (w *Watchdog) tryVerifiedCandidates(ctx context.Context, current map[string
 	return w.tryVerifiedCandidatesMode(ctx, current, higherThan, false)
 }
 
-func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[string]interface{}, higherThan *models.Server, fastOnly bool) error {
+func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[string]interface{}, higherThan *models.Server, fastOnly bool, speedOnly ...bool) error {
+	checkSpeed := len(speedOnly) > 0 && speedOnly[0]
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -350,6 +407,7 @@ func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[st
 		}
 		chosen := candidates[picked]
 		server, candidate := chosen.server, chosen.outbound
+		var measuredSpeed float64
 		if urgent {
 			remaining := make([]verifiedCandidate, 0, len(candidates)-1)
 			for i, item := range candidates {
@@ -377,6 +435,16 @@ func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[st
 				w.subscription.UpdateLatencies([]models.Server{server})
 				return fmt.Errorf("задержка после перезапуска %d мс превышает допустимую", confirmed.Latency)
 			}
+			if checkSpeed && w.liveSpeedProbe != nil {
+				mbps, err := w.liveSpeedProbe(ctx)
+				if err != nil {
+					return fmt.Errorf("скорость после переключения не проверена: %w", err)
+				}
+				if mbps < float64(w.config.VerifiedFailover.SpeedThresholdMbps) {
+					return fmt.Errorf("скорость после переключения %.1f Мбит/с ниже порога", mbps)
+				}
+				measuredSpeed = mbps
+			}
 			return nil
 		}); err != nil {
 			if ctx.Err() != nil {
@@ -391,6 +459,13 @@ func (w *Watchdog) tryVerifiedCandidatesMode(ctx context.Context, current map[st
 			continue
 		}
 		w.commitVerifiedCandidate(server, candidate, result)
+		if measuredSpeed > 0 {
+			w.mu.Lock()
+			w.lastSpeedMbps = measuredSpeed
+			w.lastSpeedCheck = time.Now()
+			w.mu.Unlock()
+			w.publishStatus()
+		}
 		w.writeLog("[VERIFY] Переключено и подтверждено: %s", server.Name)
 		return nil
 	}
@@ -445,6 +520,9 @@ func (w *Watchdog) commitVerifiedCandidate(server models.Server, candidate map[s
 	w.mu.Lock()
 	w.failCount = 0
 	w.qualityFailCount = 0
+	w.speedFailCount = 0
+	w.lastSpeedMbps = 0
+	w.lastSpeedCheck = time.Time{}
 	w.connected = true
 	w.lastLatency = result.Latency
 	w.lastCheck = time.Now()

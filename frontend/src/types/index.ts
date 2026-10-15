@@ -24,6 +24,9 @@ export type AutomationSettings = {
     excluded_server_names: string[]
     exclude_name_contains: string[]
     offline_fail_count: number
+    speed_enabled: boolean
+    speed_threshold_mbps: number
+    speed_check_interval_sec: number
     quality_enabled: boolean
     quality_threshold_ms: number
     quality_fail_count: number
@@ -45,6 +48,9 @@ export type Status = {
     current_source_id?: number
     protocol: string
     latency_ms: number
+    speed_mbps?: number
+    speed_degraded?: boolean
+    last_speed_check?: string
     uptime: string
     connected_since?: string
     uptime_seconds?: number

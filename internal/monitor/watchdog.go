@@ -42,7 +42,12 @@ type Watchdog struct {
 	verifiedDisplay         verifiedIdentity // protected by mu; bound to an outbound fingerprint
 	verifiedPersisted       verifiedIdentity // protected by operationMu; only successful disk writes
 	qualityFailCount        int
+	speedFailCount          int
+	lastSpeedCheck          time.Time
+	lastSpeedMbps           float64
 	verifiedProbe           func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
+	liveProbe               func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
+	liveSpeedProbe          func(context.Context) (float64, error)
 	verifiedApplier         *xkeen.VerifiedApplier
 	config                  *models.Config
 	subscription            *xkeen.SubscriptionManager
@@ -743,12 +748,18 @@ func (w *Watchdog) GetStatus() models.Status {
 		XrayRunning:         coreRunning,
 		Restarting:          restarting,
 		Latency:             w.lastLatency,
+		SpeedMbps:           w.lastSpeedMbps,
+		SpeedDegraded:       w.config.VerifiedFailover.SpeedEnabled && w.speedFailCount >= 2,
 		LastCheck:           w.lastCheck,
 		WatchdogActive:      w.active,
 		Core:                rt.Core,
 		Mode:                rt.Mode,
 		XKeenVersion:        rt.Version,
 		Generation:          rt.Generation,
+	}
+	if !w.lastSpeedCheck.IsZero() {
+		checked := w.lastSpeedCheck
+		status.LastSpeedCheck = &checked
 	}
 
 	// Uptime
