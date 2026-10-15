@@ -65,6 +65,12 @@ func (w *Watchdog) PrepareVerified() error {
 		w.liveSpeedProbe = func(ctx context.Context) (float64, error) {
 			return xkeen.MeasureRunningSpeed(ctx, w.config.VerifiedFailover.ProbeAddr, 20*time.Second)
 		}
+		if len(w.config.HealthCheckURLs) > 0 {
+			w.fastProbe = func(ctx context.Context) error {
+				return xkeen.ProbeRunningTCP(ctx, w.config.VerifiedFailover.ProbeAddr,
+					w.config.HealthCheckURLs[0], 900*time.Millisecond)
+			}
+		}
 	} else {
 		w.writeLog("[VERIFY] Локальный маршрут Xray недоступен, проверка доступности использует тестовое ядро: %v", routeErr)
 	}
@@ -74,6 +80,50 @@ func (w *Watchdog) PrepareVerified() error {
 	}
 	w.rememberVerifiedCurrent(ob)
 	return nil
+}
+
+// runFastVerifiedChecks uses a single short TCP connection per second while
+// idle. Two failures trigger the normal HTTPS confirmation and recovery path.
+func (w *Watchdog) runFastVerifiedChecks(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	failures := 0
+	var nextConfirmation time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !w.IsActive() || xkeen.IsRestarting() || time.Now().Before(nextConfirmation) {
+			failures = 0
+			continue
+		}
+		if !w.operationMu.TryLock() {
+			failures = 0
+			continue
+		}
+		w.operationMu.Unlock()
+		pulseCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+		err := w.fastProbe(pulseCtx)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			failures = 0
+			continue
+		}
+		failures++
+		if failures < 2 {
+			continue
+		}
+		failures = 0
+		w.writeLog("[FAST] Две короткие проверки не прошли; подтверждаю сбой через HTTPS")
+		w.checkVerified(ctx)
+		// Avoid repeated full TLS checks when the short target alone is blocked.
+		nextConfirmation = time.Now().Add(15 * time.Second)
+	}
 }
 
 // Keep the last matched logical name while a subscription rotates its IP.

@@ -47,6 +47,7 @@ type Watchdog struct {
 	lastSpeedMbps           float64
 	verifiedProbe           func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
 	liveProbe               func(context.Context, map[string]interface{}) (xkeen.ProbeResult, error)
+	fastProbe               func(context.Context) error
 	liveSpeedProbe          func(context.Context) (float64, error)
 	verifiedApplier         *xkeen.VerifiedApplier
 	config                  *models.Config
@@ -143,6 +144,9 @@ func (w *Watchdog) Start(ctx context.Context) {
 
 	// Check once immediately
 	w.checkWithContext(ctx)
+	if w.config.VerifiedFailover.Enabled && w.fastProbe != nil {
+		go w.runFastVerifiedChecks(ctx)
+	}
 
 	for {
 		select {

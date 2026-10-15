@@ -132,6 +132,9 @@ export function AutomationCard({ servers }: { servers: Server[] }) {
                     быстрый сервер из заданных приоритетов ищется уже после
                     первой неудачной проверки. Полный поиск начинается после
                     заданного ниже числа проверок.
+                    Дополнительно раз в секунду выполняется короткая TCP-проверка
+                    через Xray. Два сбоя подряд сразу запускают подтверждение
+                    через HTTPS и поиск замены.
                 </p>
                 <div className='flex items-center justify-between gap-2'>
                     <label htmlFor='automation-enabled' className='text-sm'>
