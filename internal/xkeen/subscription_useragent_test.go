@@ -67,3 +67,22 @@ func TestSubscriptionStillReports446IfCompatibleRetryFails(t *testing.T) {
 		t.Fatalf("unresolved provider error should be retained: %v, requests=%d", err, requests.Load())
 	}
 }
+
+func TestSubscriptionRetries445WithVPNClientUserAgent(t *testing.T) {
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.UserAgent() != "Hiddify" {
+			w.WriteHeader(445)
+			return
+		}
+		_, _ = w.Write([]byte(uriA))
+	}))
+	defer provider.Close()
+
+	sm := NewSubscriptionManager(t.TempDir())
+	servers, err := sm.UpdateSourceContext(context.Background(), 1, provider.URL)
+	if err != nil || len(servers) != 1 || servers[0].SourceID != 1 || requests.Load() != 2 {
+		t.Fatalf("445 retry failed: servers=%d requests=%d error=%v", len(servers), requests.Load(), err)
+	}
+}

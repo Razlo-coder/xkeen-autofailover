@@ -549,10 +549,10 @@ func (sm *SubscriptionManager) downloadAndParseContext(ctx context.Context, url 
 	if err != nil {
 		return downloadedSubscription{}, err
 	}
-	// Some subscription endpoints return 446 to generic HTTP clients and
+	// Some subscription endpoints return 445 or 446 to generic HTTP clients and
 	// provide share links to a recognised VPN client. Retry that response once
 	// without changing requests to providers that already work normally.
-	if resp.StatusCode == 446 {
+	if resp.StatusCode == 445 || resp.StatusCode == 446 {
 		resp.Body.Close()
 		resp, err = fetch("Hiddify")
 		if err != nil {
