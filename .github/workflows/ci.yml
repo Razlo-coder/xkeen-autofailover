@@ -38,11 +38,7 @@ jobs:
         run: |
           if ! go test -race ./... -count=1 > test-output.log 2>&1; then
             tail -n 80 test-output.log
-            while IFS= read -r line; do
-              case "$line" in
-                *FAIL*|*Error*|*fatal*|*want*|*got*) printf '::error::%s\n' "$line" ;;
-              esac
-            done < test-output.log
+            printf '::error::%s\n' "$(tail -n 80 test-output.log | sed ':a;N;$!ba;s/\n/%0A/g')"
             exit 1
           fi
           cat test-output.log
