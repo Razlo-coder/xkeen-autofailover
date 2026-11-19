@@ -51,6 +51,10 @@ export function useEventSource() {
                 qc.invalidateQueries({ queryKey: ['servers'] })
             })
 
+            es.addEventListener('core-update', e => {
+                qc.setQueryData(['core-update'], JSON.parse(e.data))
+            })
+
             es.onerror = () => {
                 es.close()
                 esRef.current = null

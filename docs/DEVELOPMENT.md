@@ -16,7 +16,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags='-s -w' 
 CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags='-s -w' -o build/xkeen-panel-mipsel .
 ```
 
-CI выполняет сборку интерфейса, Go-тесты, `go vet`, интеграционные проверки с Xray 26.9.9 и сборку трёх архитектур. Тег `v*` публикует бинарники, установщик, конфиг по умолчанию и SHA256SUMS.
+CI выполняет сборку интерфейса, Go-тесты, `go vet`, интеграционные проверки с Xray 26.11.9 и сборку трёх архитектур. Тег `v*` публикует бинарники, установщик, конфиг по умолчанию и SHA256SUMS.
 
 ## Основные части
 

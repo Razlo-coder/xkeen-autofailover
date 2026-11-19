@@ -8,6 +8,7 @@ import { ConnectionUptime } from '@/components/connectionUptime'
 import { SubscriptionForm } from '@/components/subscriptionForm'
 import { ServerList } from '@/components/serverList'
 import { Controls } from '@/components/controls'
+import { CoreUpdateCard } from '@/components/coreUpdateCard'
 import { XKeenCard } from '@/components/xkeenCard'
 import { SettingsCard } from '@/components/settingsCard'
 import { PasskeyCard } from '@/components/passkeyCard'
@@ -335,6 +336,7 @@ export function DashboardPage() {
                                 restarting
                             }
                         />
+                        <CoreUpdateCard />
                         {!s?.verified_failover && (
                             <XKeenCard
                                 status={s}

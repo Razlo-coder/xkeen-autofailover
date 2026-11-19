@@ -26,8 +26,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/xray"
           cd "$RUNNER_TEMP/xray"
-          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o xray.zip
-          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip.dgst -o xray.zip.dgst
+          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-64.zip -o xray.zip
+          curl -fL --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-64.zip.dgst -o xray.zip.dgst
           expected=$(awk '/^SHA2-256=/{print $2}' xray.zip.dgst)
           test "${#expected}" = 64
           printf '%s  xray.zip\n' "$expected" | sha256sum -c -

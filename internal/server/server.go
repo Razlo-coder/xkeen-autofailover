@@ -9,6 +9,7 @@ import (
 	"time"
 	"xkeen-panel/internal/api"
 	"xkeen-panel/internal/auth"
+	"xkeen-panel/internal/coreupdate"
 	"xkeen-panel/internal/geoip"
 	"xkeen-panel/internal/models"
 	"xkeen-panel/internal/monitor"
@@ -29,7 +30,10 @@ type Server struct {
 	geoip        *geoip.Matcher
 	eventBus     *sse.EventBus
 	frontendFS   fs.FS
+	coreUpdater  *coreupdate.Updater
 }
+
+func (s *Server) SetCoreUpdater(updater *coreupdate.Updater) { s.coreUpdater = updater }
 
 func New(cfg *models.Config, um *auth.UserManager, sub *xkeen.SubscriptionManager, wd *monitor.Watchdog, det *xkeen.Detector, pool *xkeen.PoolStore, matcher *geoip.Matcher, bus *sse.EventBus, frontendFS fs.FS) *Server {
 	return &Server{
@@ -91,6 +95,13 @@ func (s *Server) Handler() http.Handler {
 				requestTimeout = 10 * time.Minute
 			}
 			r.Use(middleware.Timeout(requestTimeout))
+			if s.coreUpdater != nil {
+				updates := api.NewCoreUpdateHandler(s.coreUpdater)
+				r.Get("/core-update", updates.HandleStatus)
+				r.Post("/core-update/check", updates.HandleCheck)
+				r.Post("/core-update/apply", updates.HandleApply)
+				r.Post("/core-update/rollback", updates.HandleRollback)
+			}
 
 			r.Get("/status", handlers.HandleStatus)
 			r.Get("/automation", handlers.HandleGetAutomation)

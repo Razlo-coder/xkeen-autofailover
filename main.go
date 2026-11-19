@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 	"xkeen-panel/internal/auth"
+	"xkeen-panel/internal/coreupdate"
 	"xkeen-panel/internal/geoip"
 	"xkeen-panel/internal/models"
 	"xkeen-panel/internal/monitor"
@@ -162,6 +163,21 @@ func main() {
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	coreUpdater := coreupdate.New(coreupdate.Options{
+		Runtime: detector.Runtime,
+		DataDir: cfg.DataDir,
+		Restart: func() error {
+			_, err := xkeen.RestartAndWait(detector.Runtime().Dispatcher)
+			return err
+		},
+		Busy: xkeen.IsRestarting,
+		Lock: watchdog.LockCoreOperation,
+		Log:  watchdog.Log,
+		Publish: func(state coreupdate.State) {
+			eventBus.Publish(sse.Event{Type: "core-update", Data: state})
+		},
+	})
+	go coreUpdater.Run(ctx)
 
 	// Run the watchdog
 	go watchdog.Start(ctx)
@@ -182,6 +198,7 @@ func main() {
 
 	// HTTP server
 	srv := server.New(cfg, userManager, subManager, watchdog, detector, poolStore, geoMatcher, eventBus, frontendFS)
+	srv.SetCoreUpdater(coreUpdater)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
 		Handler: srv.Handler(),
