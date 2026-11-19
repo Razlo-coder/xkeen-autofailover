@@ -34,7 +34,18 @@ jobs:
           unzip -q xray.zip
           chmod +x xray
           echo "TEST_XRAY_BIN=$RUNNER_TEMP/xray/xray" >> "$GITHUB_ENV"
-      - run: go test -race ./... -count=1
+      - name: Run Go tests
+        run: |
+          if ! go test -race ./... -count=1 > test-output.log 2>&1; then
+            tail -n 80 test-output.log
+            while IFS= read -r line; do
+              case "$line" in
+                *FAIL*|*Error*|*fatal*|*want*|*got*) printf '::error::%s\n' "$line" ;;
+              esac
+            done < test-output.log
+            exit 1
+          fi
+          cat test-output.log
       - name: Verify marked sockets with router-level privileges
         run: |
           go test -c -o "$RUNNER_TEMP/xkeen-tests" ./internal/xkeen
