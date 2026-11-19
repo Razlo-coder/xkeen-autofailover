@@ -17,7 +17,7 @@ func TestProviderIndependentProxyLinks(t *testing.T) {
 	vmess := base64.StdEncoding.EncodeToString([]byte(`{"add":"192.0.2.2","port":"443","id":"00000000-0000-4000-8000-000000000002","aid":"0","net":"ws","path":"/vpn","host":"example.com","tls":"tls","sni":"example.com","ps":"Node"}`))
 	ss := base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:test-password"))
 	cases := []struct{ protocol, uri string }{
-		{"vless", "vless://00000000-0000-4000-8000-000000000002@192.0.2.2:443?type=tcp"},
+		{"vless", "vless://00000000-0000-4000-8000-000000000002@192.0.2.2:443?type=tcp&security=tls&sni=example.com"},
 		{"trojan", "trojan://test-password@192.0.2.2:443?security=tls&sni=example.com&type=ws&path=%2Fvpn"},
 		{"vmess", "vmess://" + vmess},
 		{"shadowsocks", "ss://" + ss + "@192.0.2.2:443#Node"},
